@@ -1,0 +1,102 @@
+name: events-tickets-ms
+
+services:
+  events-db:
+    image: postgres:16-alpine
+    container_name: events-db
+    environment:
+      POSTGRES_DB: events_db
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - events_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U events_user -d events_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - events-tickets-network
+
+  events-service:
+    build: ./microservices/events-service
+    container_name: events-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://events_user:events_pass@events-db:5432/events_db
+      PORT: "8000"
+      SERVICE_NAME: events-service
+    ports:
+      - "8000:8000"
+    depends_on:
+      events-db:
+        condition: service_healthy
+    healthcheck:
+      # A imagem python:3.11-slim não inclui curl.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - events-tickets-network
+
+  tickets-db:
+    image: postgres:16-alpine
+    container_name: tickets-db
+    environment:
+      POSTGRES_DB: tickets_db
+      POSTGRES_USER: tickets_user
+      POSTGRES_PASSWORD: tickets_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - tickets_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U tickets_user -d tickets_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - events-tickets-network
+
+  tickets-service:
+    build: ./microservices/tickets-service
+    container_name: tickets-service
+    environment:
+      DATABASE_URL: postgresql://tickets_user:tickets_pass@tickets-db:5432/tickets_db
+      PORT: "3000"
+      SERVICE_NAME: tickets-service
+      EVENTS_SERVICE_URL: http://events-service:8000
+      EVENTS_SERVICE_TIMEOUT_MS: "5000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      tickets-db:
+        condition: service_healthy
+      events-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - events-tickets-network
+
+networks:
+  events-tickets-network:
+    name: events-tickets-network
+    driver: bridge
+
+volumes:
+  events_pgdata:
+  tickets_pgdata:

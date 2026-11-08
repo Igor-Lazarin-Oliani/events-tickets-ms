@@ -4,7 +4,7 @@ Plataforma distribuída de gestão de eventos e emissão unificada de inscriçõ
 
 O sistema é genérico: atende de simpósios acadêmicos e workshops online a shows, corridas de rua e campeonatos de e-sports. Inscrição e ingresso são a mesma entidade: ao se inscrever, o participante recebe um ingresso digital com código único e controle de presença (check-in).
 
-> **Projeto em desenvolvimento.** Os dois microsserviços estão prontos, mas o `docker-compose.yml` ainda não existe. Veja o [estado atual](#estado-atual).
+> **Projeto em desenvolvimento.** O sistema já funciona completo com Docker; falta o roteiro de demonstração. Veja o [estado atual](#estado-atual).
 
 ## Estado atual
 
@@ -12,14 +12,12 @@ O sistema é genérico: atende de simpósios acadêmicos e workshops online a sh
 |---|---|---|
 | 1 | `events-service` | Concluída |
 | 2 | `tickets-service` | Concluída |
-| 3 | `docker-compose.yml` com os 4 contêineres | Pendente |
+| 3 | `docker-compose.yml` com os 4 contêineres | Concluída |
 | 4 | Guia final de execução e roteiro de demonstração | Pendente |
-
-Os dois serviços já foram testados juntos em PostgreSQL 16. Os `Dockerfile`s estão escritos, mas as imagens ainda não foram construídas.
 
 ## Arquitetura
 
-O ambiente final terá exatamente 4 contêineres: dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados.
+O ambiente tem exatamente 4 contêineres: dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados.
 
 ```mermaid
 flowchart TB
@@ -101,29 +99,34 @@ Os logs são estruturados, com marcadores como `[HTTP SYNC REQUEST]`, `[EVENT SP
 
 ## Como executar
 
-A execução completa com `docker compose up --build` chega na Fase 3. Enquanto isso, é possível rodar os serviços diretamente, com Python 3.11, Node.js 20 e PostgreSQL disponíveis, e os bancos `events_db` e `tickets_db` já criados. As tabelas são criadas na subida.
-
-**`events-service`:**
+O único pré-requisito é o Docker com o Docker Compose. As portas 8000, 3000, 5433 e 5434 precisam estar livres. Na raiz do repositório:
 
 ```sh
-cd microservices/events-service
-pip install -r requirements.txt
-export DATABASE_URL="postgresql+psycopg2://USUARIO:SENHA@localhost:5432/events_db"
-uvicorn app.main:app --port 8000
+# construir as imagens e subir os 4 contêineres
+docker compose up --build -d
+
+# conferir: os 4 devem aparecer como "healthy"
+docker compose ps
+
+# acompanhar os logs dos serviços
+docker compose logs -f events-service tickets-service
 ```
 
-**`tickets-service`**, em outro terminal:
+Para encerrar:
 
 ```sh
-cd microservices/tickets-service
-npm ci
-npm run build
-export DATABASE_URL="postgresql://USUARIO:SENHA@localhost:5432/tickets_db"
-export EVENTS_SERVICE_URL="http://localhost:8000"
-npm start
+docker compose down      # mantém os dados
+docker compose down -v   # apaga também os dados
 ```
 
-No PowerShell, troque `export NOME="valor"` por `$env:NOME = "valor"`.
+| Contêiner | Porta no host | Banco | Usuário | Senha |
+|---|---|---|---|---|
+| `events-service` | 8000 | | | |
+| `tickets-service` | 3000 | | | |
+| `events-db` | 5433 | `events_db` | `events_user` | `events_pass` |
+| `tickets-db` | 5434 | `tickets_db` | `tickets_user` | `tickets_pass` |
+
+As credenciais são exclusivas do ambiente local deste trabalho.
 
 ## Testes
 
@@ -146,6 +149,7 @@ npm test
 ```
 events-tickets-ms/
 ├── README.md
+├── docker-compose.yml        # Orquestração dos 4 contêineres
 ├── docs/                     # Documentação do projeto
 └── microservices/
     ├── events-service/       # Python + FastAPI

@@ -15,8 +15,6 @@ Se [decisoes.md](decisoes.md) e [prompt.md](prompt.md) divergirem, vale a decis�
 
 ## Comandos de desenvolvimento
 
-Os comandos abaixo são os previstos e passam a valer conforme as fases forem concluídas ([estado atual](arquitetura.md#estado-da-implementacao)).
-
 ```sh
 # subir tudo, como na avaliação
 docker compose up --build -d
