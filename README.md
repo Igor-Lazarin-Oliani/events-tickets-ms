@@ -4,16 +4,28 @@ Plataforma distribuída de gestão de eventos e emissão unificada de inscriçõ
 
 O sistema é genérico: atende de simpósios acadêmicos e workshops online a shows, corridas de rua e campeonatos de e-sports. Inscrição e ingresso são a mesma entidade: ao se inscrever, o participante recebe um ingresso digital com código único e controle de presença (check-in).
 
-> **Projeto em desenvolvimento.** O sistema já funciona completo com Docker; falta o roteiro de demonstração. Veja o [estado atual](#estado-atual).
+**Autor:** [Igor-Lazarin-Oliani](https://github.com/Igor-Lazarin-Oliani)
 
-## Estado atual
+**Início rápido** (requer apenas Docker):
 
-| Fase | Entrega | Estado |
-|---|---|---|
-| 1 | `events-service` | Concluída |
-| 2 | `tickets-service` | Concluída |
-| 3 | `docker-compose.yml` com os 4 contêineres | Concluída |
-| 4 | Guia final de execução e roteiro de demonstração | Pendente |
+```sh
+git clone https://github.com/Igor-Lazarin-Oliani/events-tickets-ms.git
+cd events-tickets-ms
+docker compose up --build -d
+```
+
+Depois, abra o Swagger de [eventos](http://localhost:8000/docs) e de [ingressos](http://localhost:3000/docs), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
+
+## Requisitos atendidos
+
+| Requisito | Como é atendido |
+|---|---|
+| Heterogeneidade e CRUD | `events-service` em Python/FastAPI e `tickets-service` em TypeScript/NestJS, ambos com CRUD completo |
+| Banco por serviço | `events-db` e `tickets-db`, instâncias PostgreSQL separadas |
+| Conteinerização | Um `Dockerfile` por serviço e `docker-compose.yml` com 4 contêineres na rede `events-tickets-network` |
+| Comunicação entre serviços | HTTP REST/JSON síncrono para validar o evento, reservar e devolver vagas |
+| Documentação interativa | Swagger UI em `/docs` nos dois serviços |
+| Observabilidade | `/metrics` no padrão Prometheus, `/health` e logs estruturados correlacionados entre os serviços |
 
 ## Arquitetura
 
@@ -43,6 +55,8 @@ flowchart TB
 | `tickets-db` | PostgreSQL 16 | Banco exclusivo do `tickets-service` |
 
 ### Por que dois serviços
+
+Eventos e inscrições têm responsabilidades e dados diferentes: o catálogo muda pouco e controla a capacidade, enquanto as inscrições concentram os dados dos participantes e o check-in. A separação permite que cada parte evolua, escale e falhe de forma independente.
 
 - O `events-service` é a fonte da verdade sobre a capacidade dos eventos e não conhece os ingressos.
 - O `tickets-service` guarda apenas uma referência ao evento e uma cópia dos dados capturados na inscrição (`event_snapshot`), o que evita consultas entre bancos.
@@ -99,9 +113,13 @@ Os logs são estruturados, com marcadores como `[HTTP SYNC REQUEST]`, `[EVENT SP
 
 ## Como executar
 
-O único pré-requisito é o Docker com o Docker Compose. As portas 8000, 3000, 5433 e 5434 precisam estar livres. Na raiz do repositório:
+O único pré-requisito é o Docker com o Docker Compose. As portas 8000, 3000, 5433 e 5434 precisam estar livres.
 
 ```sh
+# obter o código
+git clone https://github.com/Igor-Lazarin-Oliani/events-tickets-ms.git
+cd events-tickets-ms
+
 # construir as imagens e subir os 4 contêineres
 docker compose up --build -d
 
@@ -128,9 +146,91 @@ docker compose down -v   # apaga também os dados
 
 As credenciais são exclusivas do ambiente local deste trabalho.
 
+## Roteiro de demonstração
+
+O roteiro parte de um ambiente no ar e mostra o caminho completo entre os dois serviços. Pode ser feito pelo Swagger UI ou pelos comandos `curl` mais abaixo.
+
+### Pelo Swagger UI
+
+| # | Onde | Ação | Resultado esperado |
+|---|---|---|---|
+| 1 | Eventos, `POST /events` | Executar o exemplo, que já tem `max_capacity: 2`, e copiar o `id` | `201`, `available_spots: 2`, `PUBLISHED` |
+| 2 | Ingressos, `POST /tickets` | Emitir 2 ingressos com esse `event_id` e `participant_document` diferentes | `201` nos dois, com `ticket_code` no formato `EVT-2026-XXXXXX` |
+| 3 | Eventos, `GET /events/{id}` | Consultar o evento | `available_spots: 0`, `SOLD_OUT` |
+| 4 | Ingressos, `POST /tickets` | Tentar um 3º ingresso, com outro documento | `409 Event is sold out` |
+| 5 | Ingressos, `PUT /tickets/{id}` | Enviar `{"status": "CHECKED_IN"}` para o 1º ingresso | `200`, `CHECKED_IN` |
+| 6 | Ingressos, `DELETE /tickets/{id}` | Cancelar o 2º ingresso | `200`, `CANCELLED` |
+| 7 | Eventos, `GET /events/{id}` | Consultar o evento novamente | `available_spots: 1`, `PUBLISHED` |
+| 8 | `/metrics` e logs | Abrir as métricas e os logs dos contêineres | Contadores de ingressos e operações registradas |
+
+### Por `curl`
+
+Execute em um terminal Bash (no Windows, use o Git Bash), na raiz do repositório, um passo de cada vez:
+
+```sh
+# Preparação
+EVENTS=http://localhost:8000
+TICKETS=http://localhost:3000
+JSON='Content-Type: application/json'
+extract_id() { sed -E 's/.*"id":"([^"]+)".*/\1/'; }
+show_event() { curl -s "$EVENTS/events/$EVENT_ID"; echo; }
+issue() {
+  curl -s -X POST "$TICKETS/tickets" -H "$JSON" -H "X-Correlation-Id: demo-$3" \
+    -d "{\"event_id\":\"$EVENT_ID\",\"participant_name\":\"$1\",\"participant_email\":\"$2\",\"participant_document\":\"$3\"}"
+}
+
+# 1. Criar um evento com 2 vagas
+EVENT=$(curl -s -X POST "$EVENTS/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2026-11-20T08:00:00-04:00","end_at":"2026-11-20T18:00:00-04:00","max_capacity":2}')
+echo "$EVENT"
+EVENT_ID=$(echo "$EVENT" | extract_id)
+
+# 2. Emitir 2 ingressos: as vagas chegam a 0 e o evento fica SOLD_OUT
+TICKET_1=$(issue 'Ana Lima' 'ana@example.com' '2026000001')
+echo "$TICKET_1"
+TICKET_2=$(issue 'Bruno Reis' 'bruno@example.com' '2026000002')
+echo "$TICKET_2"
+TICKET_1_ID=$(echo "$TICKET_1" | extract_id)
+TICKET_2_ID=$(echo "$TICKET_2" | extract_id)
+show_event
+
+# 3. O 3º ingresso é barrado com 409 Event is sold out
+issue 'Carla Dias' 'carla@example.com' '2026000003'; echo
+
+# 4. Check-in do 1º ingresso
+curl -s -X PUT "$TICKETS/tickets/$TICKET_1_ID" -H "$JSON" -d '{"status":"CHECKED_IN"}'; echo
+
+# 5. Cancelar o 2º ingresso: a vaga volta e o evento fica PUBLISHED
+curl -s -X DELETE "$TICKETS/tickets/$TICKET_2_ID"; echo
+show_event
+
+# 6. Telemetria
+curl -s "$TICKETS/metrics" | grep -E '^tickets_(issued|cancelled)_total'
+curl -s "$EVENTS/metrics" | grep '^events_spot_operations_total'
+docker compose logs events-service tickets-service | grep demo-2026000001
+```
+
+O último comando mostra uma única inscrição atravessando os dois serviços: o `X-Correlation-Id` aparece nos logs de `tickets-service` e de `events-service`.
+
+### Tolerância a falhas (opcional)
+
+Com o `events-service` fora do ar, a emissão e o cancelamento falham sem deixar dados inconsistentes:
+
+```sh
+docker compose stop events-service
+
+# As duas chamadas respondem 503 Events service unavailable
+issue 'Daniel Melo' 'daniel@example.com' '2026000004'; echo
+curl -s -X DELETE "$TICKETS/tickets/$TICKET_1_ID"; echo
+
+# O ingresso continua CHECKED_IN
+curl -s "$TICKETS/tickets/$TICKET_1_ID"; echo
+
+docker compose start events-service
+```
+
 ## Testes
 
-Os testes automatizados não precisam de banco de dados nem de Docker.
+Os testes automatizados não precisam de banco de dados nem de Docker, mas exigem Python 3.11 e Node.js 20 instalados.
 
 ```sh
 # events-service
