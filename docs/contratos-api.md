@@ -2,7 +2,22 @@
 
 Regras de comportamento e erros dos dois serviços. Os campos das tabelas estão nas seções 5.1 e 5.2 do [prompt.md](prompt.md). As referências no formato D1, D2 etc. estão em [decisoes.md](decisoes.md).
 
-Enquanto os serviços não existirem, este documento é o contrato planejado. Depois, ele deve continuar consistente com o Swagger em `/docs`.
+Este documento deve continuar consistente com o Swagger em `/docs/events` e `/docs/tickets`.
+
+## API Gateway (porta 8080)
+
+Único ponto de entrada externo (D13, D14). Rotas não listadas respondem `404 Route not found`, e um serviço indisponível responde `503 Service unavailable`.
+
+| Rota pública | Destino |
+|---|---|
+| `/events`, `/events/{id}` | `events-service` |
+| `/tickets`, `/tickets/{id}` | `tickets-service` |
+| `/docs/events`, `/docs/tickets` | Swagger de cada serviço |
+| `/health/events`, `/health/tickets` | `GET /health` de cada serviço |
+| `/metrics/events`, `/metrics/tickets` | `GET /metrics` de cada serviço |
+| `/gateway/health` | Saúde do próprio gateway |
+
+`PATCH /events/{id}/reserve-spot` e `release-spot` são internas: só o `tickets-service` as alcança, pela rede Docker. As rotas das tabelas abaixo são as de cada serviço.
 
 ## `events-service` (porta 8000)
 

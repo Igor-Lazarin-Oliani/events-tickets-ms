@@ -6,7 +6,7 @@ Você atua como um **Arquiteto de Sistemas Distribuídos Sênior e Engenheiro de
 
 **Regras de Ouro para geração de código:**
 
-1. **Topologia Estrita de 4 Contêineres:** O ambiente Docker deve ser composto exatamente por **4 contêineres**:
+1. **Topologia de Contêineres:** O núcleo do ambiente Docker são os **4 contêineres** abaixo, acrescidos da infraestrutura exigida pelo edital (seção 9):
    * `events-db` (Banco PostgreSQL exclusivo do Microsserviço A)
    * `events-service` (Microsserviço A em Python + FastAPI)
    * `tickets-db` (Banco PostgreSQL exclusivo do Microsserviço B)
@@ -16,7 +16,7 @@ Você atua como um **Arquiteto de Sistemas Distribuídos Sênior e Engenheiro de
 
 3. **Alta Modularização e Boas Práticas:** Ambos os microsserviços devem ter responsabilidades bem separadas em camadas/módulos (Controllers/Routers, Services, Repositories/Entities, DTOs/Schemas, Integrations e Metrics).
 
-4. **Swagger (OpenAPI 3.0) Obrigatório nas Duas APIs:** Ambos os microsserviços devem expor interface gráfica interativa do **Swagger UI** na rota `/docs`, com todos os endpoints, DTOs/Schemas, exemplos de payload e códigos de resposta HTTP devidamente documentados.
+4. **Swagger (OpenAPI 3.0) Obrigatório nas Duas APIs:** Ambos os microsserviços devem expor interface gráfica interativa do **Swagger UI**, acessível pelo API Gateway em `/docs/events` e `/docs/tickets` (D14), com todos os endpoints, DTOs/Schemas, exemplos de payload e códigos de resposta HTTP devidamente documentados.
 
 5. **Código didático e rastreável:** Adicione logs claros e estruturados no console (ex: `[HTTP SYNC REQUEST]`, `[EVENT SPOT RESERVED]`, `[EVENT SPOT RELEASED]`, `[TELEMETRY]`) para facilitar a demonstração ao vivo durante a apresentação do trabalho.
 
@@ -317,3 +317,33 @@ Objetivo: Entregar a documentação exigida no edital do trabalho para nota máx
     4. Realização de Check-in (`PUT /tickets/:id`).
     5. Cancelamento de um ingresso (`DELETE /tickets/:id`) devolvendo a vaga automaticamente ao `events-service` (`available_spots: 1`, status `"PUBLISHED"`).
     6. Visualização da coleta de telemetria em `/metrics` e nos logs dos contêineres.
+
+## 9. Adequação ao Edital (Fases 5 a 7)
+
+O edital do trabalho (`trabalho_cd.pdf`) pontua itens que a especificação original não previa. **Esta seção prevalece sobre as seções anteriores** quanto a número de contêineres, portas expostas e URLs do Swagger.
+
+### Pontuação do edital
+
+| Item | Pontos | Atendido por |
+|---|---|---|
+| Heterogeneidade e CRUDs | 2,0 | Fases 1 e 2 |
+| Banco por serviço | 1,0 | Fases 1 a 3 |
+| Conteinerização e orquestração | 1,0 | Fase 3 |
+| API Gateway | 1,0 | Fase 5 |
+| Observabilidade com ferramentas especializadas | 1,0 | Fase 6 |
+| Mensageria assíncrona (bônus) | +1,0 | Fase 7 |
+| Apresentação síncrona, de até 30 min | 4,0 | Até 21/11; a nota do código depende dela |
+
+A apresentação deve conter a contextualização do problema, os detalhes da arquitetura e a demonstração prática: build a partir do repositório em máquina limpa, rotas, persistência e coleta de telemetria.
+
+### 🔹 FASE 5: API Gateway (`gateway/nginx.conf`)
+
+Contêiner `api-gateway` (NGINX) como única porta de entrada, em `8080`. Serviços e bancos ficam sem porta no host. O gateway usa lista de rotas permitidas e não expõe `reserve-spot` nem `release-spot` (D13, D14).
+
+### 🔹 FASE 6: Observabilidade
+
+Contêineres `prometheus` e `grafana`, com coleta das métricas dos dois serviços e painel já configurado no repositório, sem passo manual.
+
+### 🔹 FASE 7: Mensageria Assíncrona
+
+Contêiner `rabbitmq`. Cancelar um evento publica uma mensagem, e o `tickets-service` cancela os ingressos do evento. A comunicação HTTP síncrona de reserva e devolução de vagas permanece.

@@ -121,6 +121,7 @@ def delete_event(id: UUID = EVENT_ID, service: EventService = Depends(get_event_
     response_model=EventResponse,
     summary="Reserva uma vaga (integração)",
     description=(
+        "**Rota interna, não exposta pelo API Gateway.** "
         "Usado pelo `tickets-service` na emissão do ingresso. Decrementa `available_spots` de "
         "forma atômica e muda o status para `SOLD_OUT` ao chegar a zero."
     ),
@@ -140,6 +141,7 @@ def reserve_spot(id: UUID = EVENT_ID, service: EventService = Depends(get_event_
     response_model=EventResponse,
     summary="Devolve uma vaga (integração)",
     description=(
+        "**Rota interna, não exposta pelo API Gateway.** "
         "Usado pelo `tickets-service` no cancelamento e na compensação. Incrementa "
         "`available_spots` até `max_capacity` e retorna `SOLD_OUT` para `PUBLISHED`."
     ),

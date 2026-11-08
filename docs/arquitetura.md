@@ -12,6 +12,9 @@ Visão do que existe e do que está previsto. A especificação completa está e
 | 2 | `tickets-service` (NestJS + PostgreSQL) | Concluída e validada em contêiner |
 | 3 | `docker-compose.yml` com 4 contêineres | Concluída e validada |
 | 4 | `README.md` e roteiro de demonstração | Concluída e validada |
+| 5 | API Gateway NGINX | Concluída e validada |
+| 6 | Prometheus e Grafana | Não iniciada |
+| 7 | Mensageria com RabbitMQ (bônus) | Não iniciada |
 
 Atualize esta tabela ao concluir cada fase.
 
@@ -21,13 +24,15 @@ Atualize esta tabela ao concluir cada fase.
 flowchart TB
     cliente["Swagger UI / curl / Postman"]
     subgraph rede["Rede Docker: events-tickets-network"]
+        gateway["api-gateway<br/>NGINX :80"]
         events["events-service<br/>FastAPI :8000"]
         tickets["tickets-service<br/>NestJS :3000"]
         eventsdb[("events-db<br/>events_db")]
         ticketsdb[("tickets-db<br/>tickets_db")]
     end
-    cliente -->|":8000"| events
-    cliente -->|":3000"| tickets
+    cliente -->|":8080"| gateway
+    gateway --> events
+    gateway --> tickets
     tickets -->|"HTTP REST síncrono"| events
     events --> eventsdb
     tickets --> ticketsdb
@@ -35,10 +40,11 @@ flowchart TB
 
 | Contêiner | Tecnologia | Porta no host | Porta interna | Responsabilidade |
 |---|---|---|---|---|
-| `events-service` | Python 3.11, FastAPI, SQLAlchemy 2 | 8000 | 8000 | Eventos e capacidade |
-| `events-db` | PostgreSQL 16 | 5433 | 5432 | Dados de `events_db` |
-| `tickets-service` | Node.js 20, NestJS, TypeORM | 3000 | 3000 | Inscrições e ingressos |
-| `tickets-db` | PostgreSQL 16 | 5434 | 5432 | Dados de `tickets_db` |
+| `api-gateway` | NGINX 1.27 | 8080 | 80 | Entrada única e roteamento |
+| `events-service` | Python 3.11, FastAPI, SQLAlchemy 2 | Nenhuma | 8000 | Eventos e capacidade |
+| `events-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `events_db` |
+| `tickets-service` | Node.js 20, NestJS, TypeORM | Nenhuma | 3000 | Inscrições e ingressos |
+| `tickets-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `tickets_db` |
 
 ## Fronteiras entre os serviços
 
@@ -48,7 +54,7 @@ flowchart TB
 
 ## Ordem de inicialização
 
-`events-db` e `tickets-db` saudáveis → `events-service` saudável → `tickets-service`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
+`events-db` e `tickets-db` saudáveis → `events-service` saudável → `tickets-service` saudável → `api-gateway`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
 
 ## Configuração
 
@@ -66,4 +72,4 @@ Os valores padrão ficam no `docker-compose.yml`, para que a avaliação não de
 - `GET /health` e `GET /metrics` (formato Prometheus) nos dois serviços, sem contêiner de Prometheus.
 - Métricas de requisições e latência nos dois serviços, além de contadores de ingressos emitidos e cancelados no `tickets-service`.
 - Logs estruturados com método, rota, status e duração em milissegundos.
-- O cabeçalho `X-Correlation-Id` é gerado ou reaproveitado pelo `tickets-service`, enviado ao `events-service` e impresso nos logs dos dois lados (D7).
+- O cabeçalho `X-Correlation-Id` é gerado ou reaproveitado pelo `api-gateway`, repassado aos serviços e impresso nos logs de todos eles (D7).

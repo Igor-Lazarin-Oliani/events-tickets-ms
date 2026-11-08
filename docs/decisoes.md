@@ -71,6 +71,18 @@ Toda a documentação fica em `docs/`, exceto o `README.md`, previsto na raiz pe
 
 Um evento esgotado tem status `SOLD_OUT`. Na ordem original, ele cairia na regra `status !== PUBLISHED` e responderia `400`, mas o roteiro da demonstração exige `409 Event is sold out` no terceiro ingresso. Por isso, `SOLD_OUT` é verificado antes; `CANCELLED` e `FINISHED` continuam respondendo `400`.
 
+## D13 — API Gateway NGINX como única porta de entrada
+
+**Status:** confirmada pelo autor. Substitui a topologia estrita de 4 contêineres.
+
+O edital pontua o gateway. O `api-gateway` publica a porta `8080`; serviços e bancos ficam acessíveis só na rede interna. O NGINX usa lista de rotas permitidas: `reserve-spot` e `release-spot` não têm rota pública e respondem `404`, o que reduz a falta de autenticação entre serviços. O `tickets-service` continua chamando o `events-service` diretamente pela rede interna.
+
+## D14 — Swagger, saúde e métricas sob caminhos do gateway
+
+**Status:** confirmada pelo autor. Substitui a rota `/docs` de cada serviço.
+
+Os dois serviços tinham `/docs`, `/health` e `/metrics`, que colidiriam em uma única porta. O Swagger agora é servido em `/docs/events` e `/docs/tickets`, diretamente pelos serviços, sem reescrita de URL, o que mantém o "Try it out" funcionando pelo gateway. Saúde e métricas são publicadas em `/health/{events,tickets}` e `/metrics/{events,tickets}`.
+
 ## D12 — `PUT /tickets/:id` parcial e estrito
 
 **Status:** provisória.

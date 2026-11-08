@@ -19,7 +19,10 @@ async function bootstrap(): Promise<void> {
     .setDescription('Inscrições e emissão de ingressos da plataforma events-tickets-ms.')
     .setVersion('1.0.0')
     .build();
-  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+  // Caminhos públicos: o gateway encaminha /docs/tickets sem reescrever a URL.
+  SwaggerModule.setup('docs/tickets', app, SwaggerModule.createDocument(app, swaggerConfig), {
+    jsonDocumentUrl: 'docs/tickets/openapi.json',
+  });
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port, '0.0.0.0');

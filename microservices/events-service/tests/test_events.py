@@ -214,7 +214,7 @@ def test_metrics_exposes_spot_operations(client, create_event):
 
 
 def test_swagger_documents_all_routes(client):
-    paths = client.get("/openapi.json").json()["paths"]
+    paths = client.get("/docs/events/openapi.json").json()["paths"]
 
     assert {
         "/events",

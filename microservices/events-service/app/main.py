@@ -29,8 +29,10 @@ app = FastAPI(
     title="events-tickets-ms - Events Microservice API",
     description="Catálogo de eventos e controle de capacidade da plataforma events-tickets-ms.",
     version="1.0.0",
-    docs_url="/docs",
-    openapi_url="/openapi.json",
+    # Caminhos públicos: o gateway encaminha /docs/events sem reescrever a URL.
+    docs_url="/docs/events",
+    openapi_url="/docs/events/openapi.json",
+    redoc_url=None,
     openapi_tags=[
         {"name": "Events", "description": "CRUD de eventos e controle de vagas."},
         {"name": "Observability", "description": "Saúde e métricas do serviço."},
@@ -64,7 +66,10 @@ def handle_domain_error(_: Request, error: EventDomainError) -> JSONResponse:
     response_model=HealthResponse,
     tags=["Observability"],
     summary="Verifica a saúde do serviço",
-    description="Confirma que a API está no ar e que o banco responde.",
+    description=(
+        "Confirma que a API está no ar e que o banco responde. "
+        "Rota interna; pelo gateway, use `/health/events`."
+    ),
     response_description="Serviço e banco disponíveis.",
     responses={503: {"model": HealthResponse, "description": "Banco de dados indisponível."}},
 )
@@ -84,4 +89,5 @@ Instrumentator(excluded_handlers=["/metrics", "/health"]).instrument(app).expose
     endpoint="/metrics",
     tags=["Observability"],
     summary="Expõe as métricas no formato Prometheus",
+    description="Rota interna; pelo gateway, use `/metrics/events`.",
 )

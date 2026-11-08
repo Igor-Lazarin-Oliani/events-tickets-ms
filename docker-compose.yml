@@ -1,6 +1,26 @@
 name: events-tickets-ms
 
 services:
+  api-gateway:
+    image: nginx:1.27-alpine
+    container_name: api-gateway
+    ports:
+      - "8080:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      events-service:
+        condition: service_healthy
+      tickets-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/gateway/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - events-tickets-network
+
   events-db:
     image: postgres:16-alpine
     container_name: events-db
@@ -8,8 +28,6 @@ services:
       POSTGRES_DB: events_db
       POSTGRES_USER: events_user
       POSTGRES_PASSWORD: events_pass
-    ports:
-      - "5433:5432"
     volumes:
       - events_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -28,8 +46,6 @@ services:
       DATABASE_URL: postgresql+psycopg2://events_user:events_pass@events-db:5432/events_db
       PORT: "8000"
       SERVICE_NAME: events-service
-    ports:
-      - "8000:8000"
     depends_on:
       events-db:
         condition: service_healthy
@@ -54,8 +70,6 @@ services:
       POSTGRES_DB: tickets_db
       POSTGRES_USER: tickets_user
       POSTGRES_PASSWORD: tickets_pass
-    ports:
-      - "5434:5432"
     volumes:
       - tickets_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -76,8 +90,6 @@ services:
       SERVICE_NAME: tickets-service
       EVENTS_SERVICE_URL: http://events-service:8000
       EVENTS_SERVICE_TIMEOUT_MS: "5000"
-    ports:
-      - "3000:3000"
     depends_on:
       tickets-db:
         condition: service_healthy

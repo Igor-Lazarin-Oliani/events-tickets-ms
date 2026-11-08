@@ -8,7 +8,7 @@
 |---|---|
 | requisitos, modelo de dados, fases de desenvolvimento | [prompt.md](prompt.md) |
 | topologia, variáveis, o que já está implementado | [arquitetura.md](arquitetura.md) |
-| endpoints, regras de negócio, erros | [contratos-api.md](contratos-api.md) (depois da implementação, também o Swagger em `/docs`) |
+| endpoints, regras de negócio, erros | [contratos-api.md](contratos-api.md) (depois da implementação, também o Swagger em `/docs/events` e `/docs/tickets`) |
 | por que algo foi decidido assim | [decisoes.md](decisoes.md) |
 
 Se [decisoes.md](decisoes.md) e [prompt.md](prompt.md) divergirem, vale a decisão registrada.
@@ -31,10 +31,10 @@ cd microservices/tickets-service && npm ci && npm test
 
 | Recurso | Endereço |
 |---|---|
-| Swagger de eventos | http://localhost:8000/docs |
-| Métricas de eventos | http://localhost:8000/metrics |
-| Swagger de ingressos | http://localhost:3000/docs |
-| Métricas de ingressos | http://localhost:3000/metrics |
+| Swagger de eventos | http://localhost:8080/docs/events |
+| Métricas de eventos | http://localhost:8080/metrics/events |
+| Swagger de ingressos | http://localhost:8080/docs/tickets |
+| Métricas de ingressos | http://localhost:8080/metrics/tickets |
 
 ## Mapa do repositório
 
@@ -54,12 +54,13 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 ## Nunca viole
 
 1. **NUNCA faça `git commit` nem `git push`.** Ao concluir uma entrega, apenas informe a frase de commit sugerida.
-2. **Exatamente 4 contêineres:** `events-db`, `events-service`, `tickets-db` e `tickets-service`. Nada de Prometheus, Grafana, broker, gateway ou contêiner de migração.
+2. **Só os contêineres previstos:** o núcleo `events-db`, `events-service`, `tickets-db` e `tickets-service`, mais `api-gateway` e os das fases 5 a 7 ([seção 9 do prompt.md](prompt.md#9-adequação-ao-edital-fases-5-a-7)). Nada além disso sem pedido do autor.
+   **O edital (`trabalho_cd.pdf`) define a nota:** confira-o antes de fechar uma entrega.
 3. **Database per Service.** Cada serviço acessa só o próprio banco. O `tickets-service` nunca lê o `events_db`, e vice-versa; os dados de evento chegam por HTTP e ficam em `event_snapshot`.
 4. **`events-service` é a verdade sobre vagas.** Só `reserve-spot`, `release-spot` e a alteração de capacidade mudam `available_spots`.
 5. **Máquina limpa.** Nada de passo manual, `.env` obrigatório ou dependência instalada no host: o `docker compose up --build` precisa bastar.
 6. **Toda vaga reservada tem caminho de volta.** Falha depois de `reserve-spot` chama `release-spot`; falha de `release-spot` no cancelamento restaura o ingresso ([fluxos](contratos-api.md#fluxos-entre-servicos)).
-7. **Swagger completo nas duas APIs.** Endpoint novo ou alterado sai com resumo, exemplos e códigos de resposta em `/docs`.
+7. **Swagger completo nas duas APIs.** Endpoint novo ou alterado sai com resumo, exemplos e códigos de resposta em `/docs/events` ou `/docs/tickets`.
 
 <a id="armadilhas"></a>
 
@@ -72,7 +73,9 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **Nome `metadata` é reservado** no declarative do SQLAlchemy; por isso o campo é `metadata_info`.
 - **`create_all` e `synchronize` não servem de migração segura.** Mudou o modelo? Rode `docker compose down -v`. Este projeto não usa migrações (D8).
 - **`depends_on` com `service_healthy` exige `healthcheck`,** inclusive no `events-service`. A imagem `python:3.11-slim` não tem `curl`; use `python -c` com `urllib`.
-- **Dentro da rede Docker, use nome de serviço e porta interna:** `events-service:8000` e `events-db:5432`. As portas `5433` e `5434` são só para o host.
+- **Dentro da rede Docker, use nome de serviço e porta interna:** `events-service:8000` e `events-db:5432`. Só o `api-gateway` publica porta no host (`8080`); para inspecionar um banco, use `docker compose exec`.
+- **Gateway usa lista de rotas permitidas.** Rota nova precisa de `location` em `gateway/nginx.conf`, senão responde `404`. Nunca abra `reserve-spot` ou `release-spot` (D13).
+- **`proxy_pass` do gateway usa variável e `resolver` do Docker.** Sem isso, o NGINX guarda o IP antigo quando um serviço reinicia.
 - **`npm ci` no Dockerfile exige `package-lock.json` versionado.**
 - **Rótulo de métrica usa o padrão da rota** (`/tickets/:id`), nunca a URL real, para não explodir a cardinalidade.
 - **Testes do `events-service` usam SQLite em memória.** Não provam concorrência nem `FOR UPDATE`; isso só se confirma no PostgreSQL. Evite SQL que não exista nos dois, como `RETURNING` em SQLite antigo.
@@ -81,7 +84,7 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **`correlationMiddleware` fica no `app.use` antes do `listen`.** O contexto do `AsyncLocalStorage` precisa cobrir toda a requisição até o `EventsClientService`.
 - **`@IsOptional` aceita `null`.** Em coluna obrigatória use `IfPresent`, como no `UpdateTicketDto`, senão o `null` só falha no banco, com `500`.
 - **Testes Jest simulam o banco e o Serviço A.** Índice único, condições do `UPDATE` e concorrência só se confirmam com PostgreSQL real.
-- **OpenAPI do `tickets-service` fica em `/docs-json`;** a do `events-service`, em `/openapi.json`.
+- **OpenAPI fica em `/docs/events/openapi.json` e `/docs/tickets/openapi.json`,** servidas sob o caminho público e sem `servers`, para o "Try it out" usar o gateway (D14).
 - **Toda chamada ao `events-service` tem timeout.** Sem resposta vira `503`, nunca requisição pendurada.
 - **Nunca logue `participant_document` nem `participant_email`:** os logs são exibidos ao vivo na apresentação.
 

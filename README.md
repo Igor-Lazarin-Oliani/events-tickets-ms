@@ -14,7 +14,7 @@ cd events-tickets-ms
 docker compose up --build -d
 ```
 
-Depois, abra o Swagger de [eventos](http://localhost:8000/docs) e de [ingressos](http://localhost:3000/docs), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
+Depois, abra o Swagger de [eventos](http://localhost:8080/docs/events) e de [ingressos](http://localhost:8080/docs/tickets), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
 
 ## Requisitos atendidos
 
@@ -22,26 +22,29 @@ Depois, abra o Swagger de [eventos](http://localhost:8000/docs) e de [ingressos]
 |---|---|
 | Heterogeneidade e CRUD | `events-service` em Python/FastAPI e `tickets-service` em TypeScript/NestJS, ambos com CRUD completo |
 | Banco por serviço | `events-db` e `tickets-db`, instâncias PostgreSQL separadas |
-| Conteinerização | Um `Dockerfile` por serviço e `docker-compose.yml` com 4 contêineres na rede `events-tickets-network` |
+| Conteinerização | Um `Dockerfile` por serviço e `docker-compose.yml` orquestrando tudo na rede `events-tickets-network` |
+| API Gateway | NGINX como única porta de entrada, com lista de rotas permitidas |
 | Comunicação entre serviços | HTTP REST/JSON síncrono para validar o evento, reservar e devolver vagas |
-| Documentação interativa | Swagger UI em `/docs` nos dois serviços |
-| Observabilidade | `/metrics` no padrão Prometheus, `/health` e logs estruturados correlacionados entre os serviços |
+| Documentação interativa | Swagger UI dos dois serviços, acessível pelo gateway |
+| Observabilidade | `/metrics` no padrão Prometheus, `/health` e logs estruturados correlacionados entre gateway e serviços |
 
 ## Arquitetura
 
-O ambiente tem exatamente 4 contêineres: dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados.
+O ambiente tem um API Gateway como única porta de entrada e dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados.
 
 ```mermaid
 flowchart TB
     cliente["Swagger UI / curl / Postman"]
     subgraph rede["Rede Docker: events-tickets-network"]
+        gateway["api-gateway<br/>NGINX"]
         events["events-service<br/>FastAPI :8000"]
         tickets["tickets-service<br/>NestJS :3000"]
         eventsdb[("events-db<br/>events_db")]
         ticketsdb[("tickets-db<br/>tickets_db")]
     end
-    cliente --> events
-    cliente --> tickets
+    cliente -->|":8080"| gateway
+    gateway --> events
+    gateway --> tickets
     tickets -->|"HTTP REST síncrono"| events
     events --> eventsdb
     tickets --> ticketsdb
@@ -49,6 +52,7 @@ flowchart TB
 
 | Componente | Tecnologia | Responsabilidade |
 |---|---|---|
+| `api-gateway` | NGINX | Entrada única e roteamento para os serviços |
 | `events-service` | Python 3.11, FastAPI, SQLAlchemy 2, Pydantic v2 | Catálogo de eventos e controle de vagas |
 | `tickets-service` | Node.js 20, NestJS, TypeORM | Inscrições, ingressos e check-in |
 | `events-db` | PostgreSQL 16 | Banco exclusivo do `events-service` |
@@ -77,7 +81,9 @@ Eventos e inscrições têm responsabilidades e dados diferentes: o catálogo mu
 
 ## Endpoints
 
-### `events-service` (porta 8000)
+Todas as rotas públicas são acessadas pelo gateway, em `http://localhost:8080`.
+
+### `events-service`
 
 | Método e rota | Descrição |
 |---|---|
@@ -86,10 +92,10 @@ Eventos e inscrições têm responsabilidades e dados diferentes: o catálogo mu
 | `GET /events/{id}` | Busca um evento |
 | `PUT /events/{id}` | Atualiza um evento |
 | `DELETE /events/{id}` | Remove um evento |
-| `PATCH /events/{id}/reserve-spot` | Reserva uma vaga (integração) |
-| `PATCH /events/{id}/release-spot` | Devolve uma vaga (integração) |
+| `PATCH /events/{id}/reserve-spot` | Reserva uma vaga (interna, não exposta pelo gateway) |
+| `PATCH /events/{id}/release-spot` | Devolve uma vaga (interna, não exposta pelo gateway) |
 
-### `tickets-service` (porta 3000)
+### `tickets-service`
 
 | Método e rota | Descrição |
 |---|---|
@@ -101,33 +107,33 @@ Eventos e inscrições têm responsabilidades e dados diferentes: o catálogo mu
 
 ### Documentação e telemetria
 
-Disponíveis nos dois serviços, com o serviço em execução:
+Disponíveis pelo gateway, com o ambiente em execução:
 
 | Recurso | Eventos | Ingressos |
 |---|---|---|
-| Swagger UI | http://localhost:8000/docs | http://localhost:3000/docs |
-| Métricas Prometheus | http://localhost:8000/metrics | http://localhost:3000/metrics |
-| Saúde | http://localhost:8000/health | http://localhost:3000/health |
+| Swagger UI | http://localhost:8080/docs/events | http://localhost:8080/docs/tickets |
+| Métricas Prometheus | http://localhost:8080/metrics/events | http://localhost:8080/metrics/tickets |
+| Saúde | http://localhost:8080/health/events | http://localhost:8080/health/tickets |
 
-Os logs são estruturados, com marcadores como `[HTTP SYNC REQUEST]`, `[EVENT SPOT RESERVED]`, `[EVENT SPOT RELEASED]` e `[TELEMETRY]`. O cabeçalho `X-Correlation-Id` liga os logs dos dois serviços em uma mesma operação.
+Os logs são estruturados, com marcadores como `[GATEWAY]`, `[HTTP SYNC REQUEST]`, `[EVENT SPOT RESERVED]`, `[EVENT SPOT RELEASED]` e `[TELEMETRY]`. O cabeçalho `X-Correlation-Id` liga os logs do gateway e dos dois serviços em uma mesma operação.
 
 ## Como executar
 
-O único pré-requisito é o Docker com o Docker Compose. As portas 8000, 3000, 5433 e 5434 precisam estar livres.
+O único pré-requisito é o Docker com o Docker Compose. A porta 8080 precisa estar livre.
 
 ```sh
 # obter o código
 git clone https://github.com/Igor-Lazarin-Oliani/events-tickets-ms.git
 cd events-tickets-ms
 
-# construir as imagens e subir os 4 contêineres
+# construir as imagens e subir os contêineres
 docker compose up --build -d
 
-# conferir: os 4 devem aparecer como "healthy"
+# conferir: todos devem aparecer como "healthy"
 docker compose ps
 
-# acompanhar os logs dos serviços
-docker compose logs -f events-service tickets-service
+# acompanhar os logs
+docker compose logs -f api-gateway events-service tickets-service
 ```
 
 Para encerrar:
@@ -137,14 +143,14 @@ docker compose down      # mantém os dados
 docker compose down -v   # apaga também os dados
 ```
 
-| Contêiner | Porta no host | Banco | Usuário | Senha |
-|---|---|---|---|---|
-| `events-service` | 8000 | | | |
-| `tickets-service` | 3000 | | | |
-| `events-db` | 5433 | `events_db` | `events_user` | `events_pass` |
-| `tickets-db` | 5434 | `tickets_db` | `tickets_user` | `tickets_pass` |
+Só o `api-gateway` publica porta no host. Serviços e bancos ficam acessíveis apenas na rede interna; para inspecionar um banco, use, por exemplo:
 
-As credenciais são exclusivas do ambiente local deste trabalho.
+```sh
+docker compose exec events-db psql -U events_user -d events_db -c 'select title, available_spots, status from events;'
+docker compose exec tickets-db psql -U tickets_user -d tickets_db -c 'select ticket_code, status from tickets;'
+```
+
+As credenciais estão no `docker-compose.yml` e são exclusivas do ambiente local deste trabalho.
 
 ## Roteiro de demonstração
 
@@ -169,18 +175,17 @@ Execute em um terminal Bash (no Windows, use o Git Bash), na raiz do repositóri
 
 ```sh
 # Preparação
-EVENTS=http://localhost:8000
-TICKETS=http://localhost:3000
+GATEWAY=http://localhost:8080
 JSON='Content-Type: application/json'
 extract_id() { sed -E 's/.*"id":"([^"]+)".*/\1/'; }
-show_event() { curl -s "$EVENTS/events/$EVENT_ID"; echo; }
+show_event() { curl -s "$GATEWAY/events/$EVENT_ID"; echo; }
 issue() {
-  curl -s -X POST "$TICKETS/tickets" -H "$JSON" -H "X-Correlation-Id: demo-$3" \
+  curl -s -X POST "$GATEWAY/tickets" -H "$JSON" -H "X-Correlation-Id: demo-$3" \
     -d "{\"event_id\":\"$EVENT_ID\",\"participant_name\":\"$1\",\"participant_email\":\"$2\",\"participant_document\":\"$3\"}"
 }
 
 # 1. Criar um evento com 2 vagas
-EVENT=$(curl -s -X POST "$EVENTS/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2026-11-20T08:00:00-04:00","end_at":"2026-11-20T18:00:00-04:00","max_capacity":2}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2026-11-20T08:00:00-04:00","end_at":"2026-11-20T18:00:00-04:00","max_capacity":2}')
 echo "$EVENT"
 EVENT_ID=$(echo "$EVENT" | extract_id)
 
@@ -197,19 +202,34 @@ show_event
 issue 'Carla Dias' 'carla@example.com' '2026000003'; echo
 
 # 4. Check-in do 1º ingresso
-curl -s -X PUT "$TICKETS/tickets/$TICKET_1_ID" -H "$JSON" -d '{"status":"CHECKED_IN"}'; echo
+curl -s -X PUT "$GATEWAY/tickets/$TICKET_1_ID" -H "$JSON" -d '{"status":"CHECKED_IN"}'; echo
 
 # 5. Cancelar o 2º ingresso: a vaga volta e o evento fica PUBLISHED
-curl -s -X DELETE "$TICKETS/tickets/$TICKET_2_ID"; echo
+curl -s -X DELETE "$GATEWAY/tickets/$TICKET_2_ID"; echo
 show_event
 
-# 6. Telemetria
-curl -s "$TICKETS/metrics" | grep -E '^tickets_(issued|cancelled)_total'
-curl -s "$EVENTS/metrics" | grep '^events_spot_operations_total'
-docker compose logs events-service tickets-service | grep demo-2026000001
+# 6. O gateway não expõe a rota interna de reserva: 404 Route not found
+curl -s -X PATCH "$GATEWAY/events/$EVENT_ID/reserve-spot"; echo
+
+# 7. Telemetria
+curl -s "$GATEWAY/metrics/tickets" | grep -E '^tickets_(issued|cancelled)_total'
+curl -s "$GATEWAY/metrics/events" | grep '^events_spot_operations_total'
+docker compose logs api-gateway events-service tickets-service | grep demo-2026000001
 ```
 
-O último comando mostra uma única inscrição atravessando os dois serviços: o `X-Correlation-Id` aparece nos logs de `tickets-service` e de `events-service`.
+O último comando mostra uma única inscrição atravessando o sistema: o mesmo `X-Correlation-Id` aparece nos logs de `api-gateway`, `tickets-service` e `events-service`.
+
+### Persistência dos dados
+
+Mesmo removendo os contêineres, os dados continuam nos volumes:
+
+```sh
+docker compose down
+docker compose up -d --wait
+
+# O evento continua com available_spots 1 e status PUBLISHED
+show_event
+```
 
 ### Tolerância a falhas (opcional)
 
@@ -220,10 +240,10 @@ docker compose stop events-service
 
 # As duas chamadas respondem 503 Events service unavailable
 issue 'Daniel Melo' 'daniel@example.com' '2026000004'; echo
-curl -s -X DELETE "$TICKETS/tickets/$TICKET_1_ID"; echo
+curl -s -X DELETE "$GATEWAY/tickets/$TICKET_1_ID"; echo
 
 # O ingresso continua CHECKED_IN
-curl -s "$TICKETS/tickets/$TICKET_1_ID"; echo
+curl -s "$GATEWAY/tickets/$TICKET_1_ID"; echo
 
 docker compose start events-service
 ```
@@ -249,7 +269,8 @@ npm test
 ```
 events-tickets-ms/
 ├── README.md
-├── docker-compose.yml        # Orquestração dos 4 contêineres
+├── docker-compose.yml        # Orquestração dos contêineres
+├── gateway/                  # Configuração do API Gateway (NGINX)
 ├── docs/                     # Documentação do projeto
 └── microservices/
     ├── events-service/       # Python + FastAPI

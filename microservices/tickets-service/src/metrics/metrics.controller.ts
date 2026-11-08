@@ -17,7 +17,8 @@ export class MetricsController {
   @Get('health')
   @ApiOperation({
     summary: 'Verifica a saúde do serviço',
-    description: 'Confirma que a API está no ar e que o banco responde.',
+    description:
+      'Confirma que a API está no ar e que o banco responde. Rota interna; pelo gateway, use /health/tickets.',
   })
   @ApiResponse({
     status: 200,
@@ -45,7 +46,8 @@ export class MetricsController {
   @Get('metrics')
   @ApiOperation({
     summary: 'Expõe as métricas no formato Prometheus',
-    description: 'Inclui métricas padrão do Node.js, HTTP e contadores de ingressos.',
+    description:
+      'Inclui métricas padrão do Node.js, HTTP e contadores de ingressos. Rota interna; pelo gateway, use /metrics/tickets.',
   })
   @ApiProduces('text/plain')
   @ApiResponse({ status: 200, description: 'Métricas em texto no formato Prometheus.' })
