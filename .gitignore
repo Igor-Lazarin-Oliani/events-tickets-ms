@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node.js
+node_modules/
+dist/
+coverage/
+
+# Ambiente e sistema
+.env
+.DS_Store
+.vscode/
+.idea/
