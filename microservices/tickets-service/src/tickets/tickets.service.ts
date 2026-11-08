@@ -156,6 +156,23 @@ export class TicketsService {
     return this.findOne(id);
   }
 
+  /**
+   * Cancela os ingressos ativos de um evento cancelado ou removido. É idempotente, pois a entrega
+   * é "ao menos uma vez", e não devolve vagas, já que o evento não aceita mais inscrições.
+   */
+  async cancelAllForEvent(eventId: string): Promise<number> {
+    const result = await this.tickets.update(
+      { event_id: eventId, status: Not(TicketStatus.CANCELLED) },
+      { status: TicketStatus.CANCELLED },
+    );
+    const cancelled = result.affected ?? 0;
+    if (cancelled > 0) {
+      this.metrics.incrementTicketsCancelled(cancelled);
+    }
+    logEvent('TICKETS CANCELLED BY EVENT', { event_id: eventId, cancelled });
+    return cancelled;
+  }
+
   private assertEventOpen(event: EventDetails): void {
     // SOLD_OUT é verificado antes do status geral para o cliente receber 409, não 400.
     if (event.status === 'SOLD_OUT') {

@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.orm import Session
 
-from app.modules.events.models import Event, EventStatus
+from app.modules.events.models import Event, EventStatus, OutboxMessage
 
 
 class EventRepository:
@@ -40,17 +40,35 @@ class EventRepository:
         )
         return self.db.scalar(query)
 
-    def update(self, event: Event, changes: dict[str, Any]) -> Event:
+    def update(
+        self, event: Event, changes: dict[str, Any], message: Optional[OutboxMessage] = None
+    ) -> Event:
         for field_name, value in changes.items():
             setattr(event, field_name, value)
+        if message is not None:
+            self.db.add(message)
         self.db.commit()
         self.db.refresh(event)
         return event
 
-    def delete(self, event_id: UUID) -> bool:
+    def delete(self, event_id: UUID, message: OutboxMessage) -> bool:
         result = self.db.execute(delete(Event).where(Event.id == event_id))
+        if result.rowcount == 0:
+            self.db.rollback()
+            return False
+        self.db.add(message)
         self.db.commit()
-        return result.rowcount > 0
+        return True
+
+    def get_pending_messages(self, limit: int) -> list[OutboxMessage]:
+        query = (
+            select(OutboxMessage)
+            .where(OutboxMessage.published_at.is_(None))
+            .order_by(OutboxMessage.created_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        return list(self.db.scalars(query))
 
     def reserve_spot(self, event_id: UUID) -> Optional[Event]:
         """Reserva em um único UPDATE condicional; retorna None se a vaga não pôde ser reservada."""

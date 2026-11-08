@@ -6,7 +6,7 @@ import uuid
 from contextvars import ContextVar
 from typing import Any
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -25,6 +25,15 @@ SPOT_OPERATIONS = Counter(
     "Operações de reserva e devolução de vagas, por resultado.",
     ["operation", "result"],
 )
+MESSAGES_PUBLISHED = Counter(
+    "events_messages_published_total",
+    "Mensagens confirmadas pelo RabbitMQ, por routing key.",
+    ["routing_key"],
+)
+OUTBOX_PENDING = Gauge(
+    "events_outbox_pending",
+    "Mensagens aguardando publicação no lote atual da outbox.",
+)
 
 
 def configure_logging() -> None:
@@ -33,6 +42,8 @@ def configure_logging() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         stream=sys.stdout,
     )
+    # O OutboxPublisher já registra as falhas de conexão de forma resumida.
+    logging.getLogger("pika").setLevel(logging.CRITICAL)
 
 
 def log_event(tag: str, level: int = logging.INFO, **fields: Any) -> None:

@@ -257,6 +257,31 @@ describe('TicketsService.update', () => {
   });
 });
 
+describe('TicketsService.cancelAllForEvent', () => {
+  it('cancela só os ingressos ativos, sem devolver vagas', async () => {
+    const { service, repository, eventsClient, cancelled } = setup();
+    repository.update.mockResolvedValue({ affected: 3 });
+
+    await expect(service.cancelAllForEvent(EVENT_ID)).resolves.toBe(3);
+
+    expect(repository.update).toHaveBeenCalledWith(
+      { event_id: EVENT_ID, status: expect.anything() },
+      { status: TicketStatus.CANCELLED },
+    );
+    expect(eventsClient.releaseSpot).not.toHaveBeenCalled();
+    expect(cancelled).toHaveBeenCalledWith(3);
+  });
+
+  it('é idempotente em mensagens repetidas', async () => {
+    const { service, repository, cancelled } = setup();
+    repository.update.mockResolvedValue({ affected: 0 });
+
+    await expect(service.cancelAllForEvent(EVENT_ID)).resolves.toBe(0);
+
+    expect(cancelled).not.toHaveBeenCalled();
+  });
+});
+
 describe('TicketsService.cancel', () => {
   it.each([TicketStatus.CONFIRMED, TicketStatus.CHECKED_IN])(
     'cancela ingresso %s e devolve a vaga',

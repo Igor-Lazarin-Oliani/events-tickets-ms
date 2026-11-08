@@ -11,25 +11,28 @@ from app.main import app
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def session_factory() -> Iterator[Callable[[], Session]]:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    yield sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    engine.dispose()
 
+
+@pytest.fixture
+def client(session_factory: Callable[[], Session]) -> Iterator[TestClient]:
     def override_get_db() -> Iterator[Session]:
-        db = testing_session()
+        db = session_factory()
         try:
             yield db
         finally:
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
-    # Sem o bloco "with", o lifespan não roda e o PostgreSQL não é acessado.
+    # Sem o bloco "with", o lifespan não roda, e PostgreSQL e RabbitMQ não são acessados.
     yield TestClient(app)
     app.dependency_overrides.clear()
-    engine.dispose()
 
 
 @pytest.fixture

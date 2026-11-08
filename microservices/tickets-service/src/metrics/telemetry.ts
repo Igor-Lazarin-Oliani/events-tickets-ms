@@ -23,6 +23,10 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
   correlationStorage.run(correlationId, next);
 }
 
+export function runWithCorrelationId<T>(correlationId: string, action: () => T): T {
+  return correlationStorage.run(correlationId.slice(0, MAX_CORRELATION_ID_LENGTH), action);
+}
+
 export function logEvent(
   tag: string,
   fields: Record<string, unknown> = {},

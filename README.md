@@ -27,10 +27,11 @@ Depois, abra o Swagger de [eventos](http://localhost:8080/docs/events) e de [ing
 | Comunicação entre serviços | HTTP REST/JSON síncrono para validar o evento, reservar e devolver vagas |
 | Documentação interativa | Swagger UI dos dois serviços, acessível pelo gateway |
 | Observabilidade | Prometheus coletando as métricas dos serviços, painéis no Grafana e logs estruturados correlacionados entre gateway e serviços |
+| Mensageria assíncrona (bônus) | RabbitMQ: cancelar ou remover um evento publica uma mensagem, e o `tickets-service` cancela os ingressos |
 
 ## Arquitetura
 
-O ambiente tem um API Gateway como única porta de entrada, dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados, e uma camada de observabilidade com Prometheus e Grafana.
+O ambiente tem um API Gateway como única porta de entrada, dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados, mensageria assíncrona com RabbitMQ e uma camada de observabilidade com Prometheus e Grafana.
 
 ```mermaid
 flowchart TB
@@ -43,6 +44,7 @@ flowchart TB
         ticketsdb[("tickets-db<br/>tickets_db")]
         prometheus["prometheus"]
         grafana["grafana"]
+        rabbitmq[["rabbitmq"]]
     end
     cliente -->|":8080"| gateway
     gateway --> events
@@ -52,6 +54,9 @@ flowchart TB
     grafana --> prometheus
     prometheus -.->|"coleta /metrics"| events
     prometheus -.->|"coleta /metrics"| tickets
+    gateway --> rabbitmq
+    events -->|"publica event.cancelled / event.deleted"| rabbitmq
+    rabbitmq -->|"entrega"| tickets
     tickets -->|"HTTP REST síncrono"| events
     events --> eventsdb
     tickets --> ticketsdb
@@ -66,6 +71,7 @@ flowchart TB
 | `tickets-db` | PostgreSQL 16 | Banco exclusivo do `tickets-service` |
 | `prometheus` | Prometheus | Coleta das métricas dos serviços |
 | `grafana` | Grafana | Painéis de telemetria |
+| `rabbitmq` | RabbitMQ | Mensageria assíncrona entre os serviços |
 
 ### Por que dois serviços
 
@@ -81,12 +87,15 @@ Eventos e inscrições têm responsabilidades e dados diferentes: o catálogo mu
 
 **Cancelamento (`DELETE /tickets/:id`):** o ingresso passa para `CANCELLED`, o registro é mantido e a vaga volta ao evento. Se o `events-service` estiver indisponível, o ingresso retorna ao status anterior e a API responde `503`.
 
+**Cancelamento ou remoção de evento (assíncrono):** o `events-service` salva a mudança e a mensagem na mesma transação (padrão *outbox*) e responde na hora. Em seguida, publica a mensagem no RabbitMQ, e o `tickets-service` cancela os ingressos do evento. Se o broker estiver fora do ar, a mensagem aguarda e é entregue quando ele voltar.
+
 **Regras principais:**
 
 - A reserva de vagas é atômica, e requisições simultâneas não vendem mais vagas do que existem.
 - O evento passa para `SOLD_OUT` ao esgotar e volta para `PUBLISHED` quando uma vaga é devolvida.
 - Cada documento pode ter apenas uma inscrição ativa por evento.
 - Ao alterar a capacidade de um evento, as vagas já ocupadas são preservadas.
+- Um evento cancelado não pode ser reaberto.
 
 ## Endpoints
 
@@ -128,6 +137,7 @@ Disponíveis pelo gateway, com o ambiente em execução:
 |---|---|---|
 | Painel Grafana | http://localhost:8080/grafana/ | Abre sem login, somente leitura. Para editar: `admin` / `admin` |
 | Prometheus (alvos da coleta) | http://localhost:8080/prometheus/targets | Sem login |
+| RabbitMQ (filas e mensagens) | http://localhost:8080/rabbitmq/ | `events_tickets` / `events_tickets_pass` |
 
 No Swagger de eventos, as rotas `reserve-spot` e `release-spot` aparecem documentadas, mas são internas e respondem `404` pelo gateway. O mesmo vale para `/health` e `/metrics` nos dois Swaggers; use os endereços da tabela acima.
 
@@ -186,6 +196,9 @@ O roteiro parte de um ambiente no ar e mostra o caminho completo entre os dois s
 | 8 | [Grafana](http://localhost:8080/grafana/) | Abrir o painel inicial | Serviços no ar, ingressos, vagas, requisições, latência e erros |
 | 9 | [Prometheus](http://localhost:8080/prometheus/targets) | Abrir os alvos da coleta | `events-service` e `tickets-service` como `UP` |
 | 10 | Logs | `docker compose logs api-gateway events-service tickets-service` | Operações registradas com o mesmo `X-Correlation-Id` |
+| 11 | Eventos, `PUT /events/{id}` | Enviar `{"status": "CANCELLED"}` para o evento | `200`, `CANCELLED` |
+| 12 | Ingressos, `GET /tickets` | Filtrar por `event_id` | Em cerca de 1 s, todos os ingressos do evento ficam `CANCELLED` |
+| 13 | [RabbitMQ](http://localhost:8080/rabbitmq/) | Abrir a fila `tickets.event-updates` | Fila durável, com consumidor ativo e mensagens processadas |
 
 ### Por `curl`
 
@@ -263,7 +276,53 @@ curl -s -X DELETE "$GATEWAY/tickets/$TICKET_1_ID"; echo
 # O ingresso continua CHECKED_IN
 curl -s "$GATEWAY/tickets/$TICKET_1_ID"; echo
 
-docker compose start events-service
+docker compose up -d --wait events-service
+```
+
+### Mensageria assíncrona
+
+Cancelar um evento responde na hora, e os ingressos são cancelados em seguida, pela mensagem:
+
+```sh
+# Evento novo, com 2 ingressos ativos
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2026-12-05T18:00:00-04:00","end_at":"2026-12-05T23:00:00-04:00","max_capacity":10}')
+EVENT_ID=$(echo "$EVENT" | extract_id)
+issue 'Eva Nunes' 'eva@example.com' '2026000005'; echo
+issue 'Fabio Ramos' 'fabio@example.com' '2026000006'; echo
+
+# Cancelar o evento publica event.cancelled no RabbitMQ
+curl -s -X PUT "$GATEWAY/events/$EVENT_ID" -H "$JSON" -d '{"status":"CANCELLED"}'; echo
+sleep 3
+
+# Os 2 ingressos aparecem como CANCELLED
+curl -s "$GATEWAY/tickets?event_id=$EVENT_ID&status=CANCELLED"; echo
+
+# O caminho da mensagem nos logs dos dois serviços
+docker compose logs events-service tickets-service | grep -E 'EVENT MESSAGE PUBLISHED|TICKETS CANCELLED BY EVENT'
+```
+
+### Resiliência da mensageria (opcional)
+
+Com o RabbitMQ fora do ar, a mensagem aguarda na outbox e é entregue quando ele volta:
+
+```sh
+# Evento novo, com 1 ingresso ativo
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2026-12-06T07:00:00-04:00","end_at":"2026-12-06T11:00:00-04:00","max_capacity":10}')
+EVENT_ID=$(echo "$EVENT" | extract_id)
+issue 'Gabi Souza' 'gabi@example.com' '2026000007'; echo
+
+docker compose stop rabbitmq
+curl -s -X PUT "$GATEWAY/events/$EVENT_ID" -H "$JSON" -d '{"status":"CANCELLED"}'; echo
+sleep 3
+
+# O evento já está cancelado, mas o ingresso continua CONFIRMED
+curl -s "$GATEWAY/tickets?event_id=$EVENT_ID"; echo
+
+docker compose up -d --wait rabbitmq
+sleep 10
+
+# A mensagem foi entregue: o ingresso agora está CANCELLED
+curl -s "$GATEWAY/tickets?event_id=$EVENT_ID"; echo
 ```
 
 ## Testes
@@ -289,6 +348,7 @@ events-tickets-ms/
 ├── README.md
 ├── docker-compose.yml        # Orquestração dos contêineres
 ├── gateway/                  # Configuração do API Gateway (NGINX)
+├── messaging/                # Configuração do RabbitMQ
 ├── observability/            # Configuração do Prometheus e do Grafana
 ├── docs/                     # Documentação do projeto
 └── microservices/

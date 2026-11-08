@@ -1,12 +1,15 @@
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from app.core.telemetry import SPOT_OPERATIONS, log_event
-from app.modules.events.models import Event, EventStatus
+from app.core.telemetry import SPOT_OPERATIONS, correlation_id_var, log_event
+from app.modules.events.models import Event, EventStatus, OutboxMessage
 from app.modules.events.repository import EventRepository
 from app.modules.events.schemas import EventCreate, EventUpdate
+
+ROUTING_KEY_EVENT_CANCELLED = "event.cancelled"
+ROUTING_KEY_EVENT_DELETED = "event.deleted"
 
 
 class EventDomainError(Exception):
@@ -34,6 +37,30 @@ class EventValidationError(EventDomainError):
 
 def _as_aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _build_event_message(routing_key: str, event_id: UUID) -> OutboxMessage:
+    message_id = uuid4()
+    return OutboxMessage(
+        id=message_id,
+        routing_key=routing_key,
+        payload={
+            "message_id": str(message_id),
+            "event_type": routing_key,
+            "event_id": str(event_id),
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "correlation_id": correlation_id_var.get(),
+        },
+    )
+
+
+def _log_message_queued(message: OutboxMessage) -> None:
+    log_event(
+        "EVENT MESSAGE QUEUED",
+        routing_key=message.routing_key,
+        event_id=message.payload["event_id"],
+        message_id=message.id,
+    )
 
 
 class EventService:
@@ -78,18 +105,32 @@ class EventService:
             )
         available_spots = new_capacity - occupied_spots
 
-        status = changes.get("status", event.status)
+        previous_status = event.status
+        status = changes.get("status", previous_status)
+        # Terminal: reabrir permitiria que uma mensagem atrasada cancelasse ingressos novos.
+        if previous_status == EventStatus.CANCELLED and status != EventStatus.CANCELLED:
+            raise EventConflictError("Cancelled event cannot be reopened")
+
         if status == EventStatus.PUBLISHED and available_spots == 0:
             status = EventStatus.SOLD_OUT
         elif status == EventStatus.SOLD_OUT and available_spots > 0:
             status = EventStatus.PUBLISHED
 
         changes.update(available_spots=available_spots, status=status)
-        return self.repository.update(event, changes)
+        message = None
+        if status == EventStatus.CANCELLED and previous_status != EventStatus.CANCELLED:
+            message = _build_event_message(ROUTING_KEY_EVENT_CANCELLED, event_id)
+
+        updated = self.repository.update(event, changes, message)
+        if message is not None:
+            _log_message_queued(message)
+        return updated
 
     def delete_event(self, event_id: UUID) -> None:
-        if not self.repository.delete(event_id):
+        message = _build_event_message(ROUTING_KEY_EVENT_DELETED, event_id)
+        if not self.repository.delete(event_id, message):
             raise EventNotFoundError()
+        _log_message_queued(message)
 
     def reserve_spot(self, event_id: UUID) -> Event:
         event = self.repository.reserve_spot(event_id)

@@ -39,15 +39,38 @@ services:
     networks:
       - events-tickets-network
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq
+    # O RabbitMQ guarda os dados por nome do nó, que depende do hostname.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: events_tickets
+      RABBITMQ_DEFAULT_PASS: events_tickets_pass
+    volumes:
+      - ./messaging/rabbitmq.conf:/etc/rabbitmq/conf.d/20-management-path.conf:ro
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+    networks:
+      - events-tickets-network
+
   events-service:
     build: ./microservices/events-service
     container_name: events-service
     environment:
       DATABASE_URL: postgresql+psycopg2://events_user:events_pass@events-db:5432/events_db
+      RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
       PORT: "8000"
       SERVICE_NAME: events-service
     depends_on:
       events-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       # A imagem python:3.11-slim não inclui curl.
@@ -86,6 +109,7 @@ services:
     container_name: tickets-service
     environment:
       DATABASE_URL: postgresql://tickets_user:tickets_pass@tickets-db:5432/tickets_db
+      RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
       PORT: "3000"
       SERVICE_NAME: tickets-service
       EVENTS_SERVICE_URL: http://events-service:8000
@@ -94,6 +118,8 @@ services:
       tickets-db:
         condition: service_healthy
       events-service:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
@@ -169,3 +195,4 @@ volumes:
   events_pgdata:
   tickets_pgdata:
   prometheus_data:
+  rabbitmq_data:

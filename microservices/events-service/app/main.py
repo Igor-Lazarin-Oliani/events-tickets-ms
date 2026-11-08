@@ -10,8 +10,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import get_db, init_db
+from app.core.database import SessionLocal, get_db, init_db
 from app.core.telemetry import TelemetryMiddleware, configure_logging, log_event
+from app.modules.events.outbox import OutboxPublisher
 from app.modules.events.router import router as events_router
 from app.modules.events.service import EventDomainError
 
@@ -21,8 +22,11 @@ configure_logging()
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
+    publisher = OutboxPublisher(SessionLocal)
+    publisher.start()
     log_event("STARTUP", status="ready", port=settings.port)
     yield
+    publisher.stop()
 
 
 app = FastAPI(

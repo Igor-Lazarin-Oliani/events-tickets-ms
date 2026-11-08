@@ -32,6 +32,13 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly eventMessagesConsumed = new Counter({
+    name: 'tickets_event_messages_consumed_total',
+    help: 'Mensagens de eventos consumidas do RabbitMQ, por routing key e resultado.',
+    labelNames: ['routing_key', 'result'],
+    registers: [this.registry],
+  });
+
   constructor() {
     collectDefaultMetrics({ register: this.registry });
   }
@@ -54,7 +61,11 @@ export class MetricsService {
     this.ticketsIssued.inc();
   }
 
-  incrementTicketsCancelled(): void {
-    this.ticketsCancelled.inc();
+  incrementTicketsCancelled(amount = 1): void {
+    this.ticketsCancelled.inc(amount);
+  }
+
+  recordEventMessage(routingKey: string, result: 'processed' | 'rejected' | 'retried'): void {
+    this.eventMessagesConsumed.inc({ routing_key: routingKey, result });
   }
 }

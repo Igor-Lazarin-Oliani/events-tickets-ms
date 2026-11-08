@@ -37,6 +37,7 @@ cd microservices/tickets-service && npm ci && npm test
 | Métricas de ingressos | http://localhost:8080/metrics/tickets |
 | Painel Grafana | http://localhost:8080/grafana/ |
 | Prometheus | http://localhost:8080/prometheus/ |
+| RabbitMQ | http://localhost:8080/rabbitmq/ (`events_tickets` / `events_tickets_pass`) |
 
 ## Mapa do repositório
 
@@ -44,6 +45,9 @@ cd microservices/tickets-service && npm ci && npm test
 /
 ├── docker-compose.yml · README.md
 ├── docs/                     # toda a documentação, inclusive este arquivo
+├── gateway/                  # configuração do NGINX
+├── messaging/                # configuração do RabbitMQ
+├── observability/            # configuração do Prometheus e do Grafana
 └── microservices/
     ├── events-service/       # Python 3.11 + FastAPI + SQLAlchemy (porta 8000)
     └── tickets-service/      # Node.js 20 + NestJS + TypeORM (porta 3000)
@@ -91,6 +95,12 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **Rótulos HTTP diferem entre os serviços.** No `events-service`: `handler` e `status="2xx"`; no `tickets-service`: `route` e `status="201"`. Filtre erros com `status=~"[45].."` e use `job` para separar os serviços.
 - **Contadores zeram quando o serviço reinicia.** Depois de `docker compose down` ou de reiniciar um serviço, os totais do painel recomeçam; os dados de negócio continuam no banco.
 - **Painel é arquivo.** Edite `observability/grafana/dashboards/events-tickets.json`: alterações pela interface não são salvas.
+- **Nunca publique no RabbitMQ direto de um endpoint.** Grave um `OutboxMessage` na mesma transação da mudança; o `OutboxPublisher` publica depois (D16).
+- **O consumidor precisa ser idempotente.** A entrega é "ao menos uma vez". Confirme (`ack`) só depois de gravar; mensagem inválida vai para a DLQ, nunca volta para a fila.
+- **`amqplib` derruba o processo em evento `error` sem ouvinte.** Mantenha os ouvintes na conexão e no canal, e o `.catch` no callback de `consume`.
+- **Falha do broker não pode afetar a API síncrona.** O `tickets-service` conecta em segundo plano, com novas tentativas.
+- **O `rabbitmq` precisa de `hostname` fixo.** Os dados ficam em pasta com o nome do nó; sem isso, filas e mensagens somem ao recriar o contêiner.
+- **`events_tickets` no lugar de `guest`.** O usuário `guest` só aceita conexões locais do próprio contêiner.
 - **Toda chamada ao `events-service` tem timeout.** Sem resposta vira `503`, nunca requisição pendurada.
 - **Nunca logue `participant_document` nem `participant_email`:** os logs são exibidos ao vivo na apresentação.
 

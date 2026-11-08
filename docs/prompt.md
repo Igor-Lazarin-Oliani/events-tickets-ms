@@ -346,4 +346,4 @@ Contêineres `prometheus` e `grafana`, com coleta das métricas dos dois serviç
 
 ### 🔹 FASE 7: Mensageria Assíncrona
 
-Contêiner `rabbitmq`. Cancelar um evento publica uma mensagem, e o `tickets-service` cancela os ingressos do evento. A comunicação HTTP síncrona de reserva e devolução de vagas permanece.
+Contêiner `rabbitmq`. Cancelar ou remover um evento publica uma mensagem, e o `tickets-service` cancela os ingressos do evento. A publicação passa por uma outbox gravada na transação do evento (D16), e um evento cancelado não pode ser reaberto (D17). A comunicação HTTP síncrona de reserva e devolução de vagas permanece.

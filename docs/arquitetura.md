@@ -14,7 +14,7 @@ Visão do que existe e do que está previsto. A especificação completa está e
 | 4 | `README.md` e roteiro de demonstração | Concluída e validada |
 | 5 | API Gateway NGINX | Concluída e validada |
 | 6 | Prometheus e Grafana | Concluída e validada |
-| 7 | Mensageria com RabbitMQ (bônus) | Não iniciada |
+| 7 | Mensageria com RabbitMQ (bônus) | Concluída e validada |
 
 Atualize esta tabela ao concluir cada fase.
 
@@ -31,6 +31,7 @@ flowchart TB
         ticketsdb[("tickets-db<br/>tickets_db")]
         prometheus["prometheus<br/>:9090"]
         grafana["grafana<br/>:3000"]
+        rabbitmq[["rabbitmq<br/>:5672"]]
     end
     cliente -->|":8080"| gateway
     gateway --> events
@@ -40,6 +41,9 @@ flowchart TB
     grafana --> prometheus
     prometheus -.->|"coleta /metrics"| events
     prometheus -.->|"coleta /metrics"| tickets
+    gateway --> rabbitmq
+    events -->|"publica event.cancelled / event.deleted"| rabbitmq
+    rabbitmq -->|"entrega"| tickets
     tickets -->|"HTTP REST síncrono"| events
     events --> eventsdb
     tickets --> ticketsdb
@@ -54,16 +58,18 @@ flowchart TB
 | `tickets-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `tickets_db` |
 | `prometheus` | Prometheus 2.55 | Nenhuma | 9090 | Coleta e armazenamento de métricas |
 | `grafana` | Grafana 11.4 | Nenhuma | 3000 | Painéis de telemetria |
+| `rabbitmq` | RabbitMQ 3.13 | Nenhuma | 5672, 15672 | Mensageria assíncrona |
 
 ## Fronteiras entre os serviços
 
 - O `events-service` é a fonte da verdade sobre capacidade e não conhece ingressos.
 - O `tickets-service` guarda `event_id` como referência lógica, sem chave estrangeira, e copia os dados do evento em `event_snapshot` no momento da inscrição.
-- A dependência é unidirecional: só o `tickets-service` chama o `events-service`.
+- A dependência síncrona é unidirecional: só o `tickets-service` chama o `events-service`.
+- No sentido inverso, o `events-service` só publica mensagens no RabbitMQ, sem conhecer quem as consome (D16).
 
 ## Ordem de inicialização
 
-`events-db` e `tickets-db` saudáveis → `events-service` saudável → `tickets-service` saudável → `api-gateway` e `prometheus` → `grafana`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
+`events-db`, `tickets-db` e `rabbitmq` saudáveis → `events-service` saudável → `tickets-service` saudável → `api-gateway` e `prometheus` → `grafana`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
 
 ## Configuração
 
@@ -71,8 +77,8 @@ Os valores padrão ficam no `docker-compose.yml`, para que a avaliação não de
 
 | Serviço | Variável | Uso |
 |---|---|---|
-| `events-service` | `DATABASE_URL`, `PORT`, `SERVICE_NAME` | Banco e identificação |
-| `tickets-service` | `DATABASE_URL`, `PORT`, `SERVICE_NAME` | Banco e identificação |
+| `events-service` | `DATABASE_URL`, `RABBITMQ_URL`, `PORT`, `SERVICE_NAME` | Banco, broker e identificação |
+| `tickets-service` | `DATABASE_URL`, `RABBITMQ_URL`, `PORT`, `SERVICE_NAME` | Banco, broker e identificação |
 | `tickets-service` | `EVENTS_SERVICE_URL` | `http://events-service:8000` |
 | `tickets-service` | `EVENTS_SERVICE_TIMEOUT_MS` | Timeout das chamadas ao Serviço A (padrão: 5000) |
 

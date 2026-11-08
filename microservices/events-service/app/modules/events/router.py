@@ -83,13 +83,15 @@ def get_event(id: UUID = EVENT_ID, service: EventService = Depends(get_event_ser
     summary="Atualiza um evento",
     description=(
         "Altera somente os campos enviados. Ao mudar `max_capacity`, as vagas ocupadas são "
-        "preservadas, e o status alterna entre `PUBLISHED` e `SOLD_OUT` conforme as vagas livres."
+        "preservadas, e o status alterna entre `PUBLISHED` e `SOLD_OUT` conforme as vagas livres. "
+        "Mudar o status para `CANCELLED` publica `event.cancelled` no RabbitMQ, e os ingressos "
+        "do evento são cancelados de forma assíncrona. Um evento cancelado não pode ser reaberto."
     ),
     response_description="Evento atualizado.",
     responses={
         **NOT_FOUND,
         409: _error(
-            "Nova capacidade menor que as vagas ocupadas.",
+            "Nova capacidade menor que as vagas ocupadas, ou evento cancelado sendo reaberto.",
             "max_capacity cannot be lower than the 5 occupied spots",
         ),
         **INVALID_DATA,
@@ -108,7 +110,10 @@ def update_event(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
     summary="Remove um evento",
-    description="Remove o evento. Ingressos já emitidos continuam com o snapshot do evento.",
+    description=(
+        "Remove o evento e publica `event.deleted` no RabbitMQ. Os ingressos são cancelados de "
+        "forma assíncrona e mantêm o snapshot do evento."
+    ),
     response_description="Evento removido.",
     responses={**NOT_FOUND, **INVALID_DATA},
 )

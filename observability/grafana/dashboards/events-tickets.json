@@ -139,6 +139,33 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "process_resident_memory_bytes", "legendFormat": "{{job}}" }],
       "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Mensagens publicadas no RabbitMQ (total)",
+      "gridPos": { "x": 0, "y": 28, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (routing_key) (events_messages_published_total)", "legendFormat": "{{routing_key}}" }],
+      "fieldConfig": { "defaults": { "decimals": 0, "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Mensagens consumidas (total)",
+      "gridPos": { "x": 8, "y": 28, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (routing_key, result) (tickets_event_messages_consumed_total)", "legendFormat": "{{routing_key}} {{result}}" }],
+      "fieldConfig": { "defaults": { "decimals": 0, "min": 0 }, "overrides": [] }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Mensagens aguardando na outbox",
+      "gridPos": { "x": 16, "y": 28, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "events_outbox_pending", "legendFormat": "pendentes" }],
+      "fieldConfig": { "defaults": { "decimals": 0, "min": 0 }, "overrides": [] }
     }
   ]
 }

@@ -39,7 +39,7 @@ Não pode haver dois ingressos não cancelados com o mesmo `participant_document
 
 **Status:** provisória.
 
-O `DELETE /events/{id}` é permitido, como na especificação: o Serviço A não conhece ingressos e consultá-los criaria dependência circular. Os ingressos mantêm o `event_snapshot`, e `404` em `release-spot` não impede o cancelamento.
+O `DELETE /events/{id}` é permitido, como na especificação: o Serviço A não conhece ingressos e consultá-los criaria dependência circular. Os ingressos mantêm o `event_snapshot`, e `404` em `release-spot` não impede o cancelamento. Desde a D16, os ingressos ativos do evento removido também são cancelados de forma assíncrona.
 
 ## D7 — Correlação entre chamadas por cabeçalho
 
@@ -88,6 +88,20 @@ Os dois serviços tinham `/docs`, `/health` e `/metrics`, que colidiriam em uma 
 **Status:** confirmada pelo autor (uso das ferramentas). O acesso pelo gateway e o modo anônimo são provisórios.
 
 O edital pede coleta por ferramentas especializadas. O Prometheus coleta `/metrics` dos dois serviços a cada 5 s, pela rede interna, e o Grafana já sobe com fonte de dados e painel definidos em arquivos, sem passo manual. Os dois são acessados por `/prometheus/` e `/grafana/`, mantendo a porta única da D13. O Grafana abre sem login, somente leitura, para simplificar a demonstração; editar exige `admin`/`admin`, credencial exclusiva do ambiente local.
+
+## D16 — Mensageria com RabbitMQ e outbox
+
+**Status:** confirmada pelo autor (uso do RabbitMQ e cenário de cancelamento). O uso da outbox é provisório.
+
+Cancelar ou remover um evento grava uma mensagem na tabela `outbox_messages`, na mesma transação da mudança. Uma thread do `events-service` publica as pendentes a cada segundo, com publisher confirms, e só então as marca como publicadas. Assim, nem uma queda do broker nem uma falha entre o commit e a publicação perdem a mensagem.
+
+A entrega é "ao menos uma vez": o `tickets-service` é idempotente e confirma a mensagem só depois de gravar. Mensagens inválidas vão para a fila `tickets.event-updates.dlq`, e falhas temporárias voltam para a fila. Os ingressos são cancelados sem devolver vagas, pois o evento não aceita mais inscrições.
+
+## D17 — Evento cancelado não pode ser reaberto
+
+**Status:** provisória.
+
+`CANCELLED` passa a ser um estado final: mudar para outro status responde `409`. Se o evento pudesse ser reaberto, seus ingressos já cancelados deixariam vagas presas, e uma mensagem atrasada poderia cancelar ingressos emitidos depois da reabertura.
 
 ## D12 — `PUT /tickets/:id` parcial e estrito
 
