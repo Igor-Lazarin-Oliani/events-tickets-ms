@@ -35,6 +35,8 @@ cd microservices/tickets-service && npm ci && npm test
 | Métricas de eventos | http://localhost:8080/metrics/events |
 | Swagger de ingressos | http://localhost:8080/docs/tickets |
 | Métricas de ingressos | http://localhost:8080/metrics/tickets |
+| Painel Grafana | http://localhost:8080/grafana/ |
+| Prometheus | http://localhost:8080/prometheus/ |
 
 ## Mapa do repositório
 
@@ -85,6 +87,10 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **`@IsOptional` aceita `null`.** Em coluna obrigatória use `IfPresent`, como no `UpdateTicketDto`, senão o `null` só falha no banco, com `500`.
 - **Testes Jest simulam o banco e o Serviço A.** Índice único, condições do `UPDATE` e concorrência só se confirmam com PostgreSQL real.
 - **OpenAPI fica em `/docs/events/openapi.json` e `/docs/tickets/openapi.json`,** servidas sob o caminho público e sem `servers`, para o "Try it out" usar o gateway (D14).
+- **Prometheus e Grafana rodam sob prefixo.** A API do Prometheus fica em `/prometheus/api/...`, inclusive na rede interna; os healthchecks e a fonte de dados do Grafana usam esse caminho.
+- **Rótulos HTTP diferem entre os serviços.** No `events-service`: `handler` e `status="2xx"`; no `tickets-service`: `route` e `status="201"`. Filtre erros com `status=~"[45].."` e use `job` para separar os serviços.
+- **Contadores zeram quando o serviço reinicia.** Depois de `docker compose down` ou de reiniciar um serviço, os totais do painel recomeçam; os dados de negócio continuam no banco.
+- **Painel é arquivo.** Edite `observability/grafana/dashboards/events-tickets.json`: alterações pela interface não são salvas.
 - **Toda chamada ao `events-service` tem timeout.** Sem resposta vira `503`, nunca requisição pendurada.
 - **Nunca logue `participant_document` nem `participant_email`:** os logs são exibidos ao vivo na apresentação.
 

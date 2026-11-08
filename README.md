@@ -26,11 +26,11 @@ Depois, abra o Swagger de [eventos](http://localhost:8080/docs/events) e de [ing
 | API Gateway | NGINX como única porta de entrada, com lista de rotas permitidas |
 | Comunicação entre serviços | HTTP REST/JSON síncrono para validar o evento, reservar e devolver vagas |
 | Documentação interativa | Swagger UI dos dois serviços, acessível pelo gateway |
-| Observabilidade | `/metrics` no padrão Prometheus, `/health` e logs estruturados correlacionados entre gateway e serviços |
+| Observabilidade | Prometheus coletando as métricas dos serviços, painéis no Grafana e logs estruturados correlacionados entre gateway e serviços |
 
 ## Arquitetura
 
-O ambiente tem um API Gateway como única porta de entrada e dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados.
+O ambiente tem um API Gateway como única porta de entrada, dois microsserviços em tecnologias diferentes, cada um com seu próprio banco de dados, e uma camada de observabilidade com Prometheus e Grafana.
 
 ```mermaid
 flowchart TB
@@ -41,10 +41,17 @@ flowchart TB
         tickets["tickets-service<br/>NestJS :3000"]
         eventsdb[("events-db<br/>events_db")]
         ticketsdb[("tickets-db<br/>tickets_db")]
+        prometheus["prometheus"]
+        grafana["grafana"]
     end
     cliente -->|":8080"| gateway
     gateway --> events
     gateway --> tickets
+    gateway --> grafana
+    gateway --> prometheus
+    grafana --> prometheus
+    prometheus -.->|"coleta /metrics"| events
+    prometheus -.->|"coleta /metrics"| tickets
     tickets -->|"HTTP REST síncrono"| events
     events --> eventsdb
     tickets --> ticketsdb
@@ -57,6 +64,8 @@ flowchart TB
 | `tickets-service` | Node.js 20, NestJS, TypeORM | Inscrições, ingressos e check-in |
 | `events-db` | PostgreSQL 16 | Banco exclusivo do `events-service` |
 | `tickets-db` | PostgreSQL 16 | Banco exclusivo do `tickets-service` |
+| `prometheus` | Prometheus | Coleta das métricas dos serviços |
+| `grafana` | Grafana | Painéis de telemetria |
 
 ### Por que dois serviços
 
@@ -115,6 +124,13 @@ Disponíveis pelo gateway, com o ambiente em execução:
 | Métricas Prometheus | http://localhost:8080/metrics/events | http://localhost:8080/metrics/tickets |
 | Saúde | http://localhost:8080/health/events | http://localhost:8080/health/tickets |
 
+| Ferramenta | Endereço | Acesso |
+|---|---|---|
+| Painel Grafana | http://localhost:8080/grafana/ | Abre sem login, somente leitura. Para editar: `admin` / `admin` |
+| Prometheus (alvos da coleta) | http://localhost:8080/prometheus/targets | Sem login |
+
+No Swagger de eventos, as rotas `reserve-spot` e `release-spot` aparecem documentadas, mas são internas e respondem `404` pelo gateway. O mesmo vale para `/health` e `/metrics` nos dois Swaggers; use os endereços da tabela acima.
+
 Os logs são estruturados, com marcadores como `[GATEWAY]`, `[HTTP SYNC REQUEST]`, `[EVENT SPOT RESERVED]`, `[EVENT SPOT RELEASED]` e `[TELEMETRY]`. O cabeçalho `X-Correlation-Id` liga os logs do gateway e dos dois serviços em uma mesma operação.
 
 ## Como executar
@@ -167,7 +183,9 @@ O roteiro parte de um ambiente no ar e mostra o caminho completo entre os dois s
 | 5 | Ingressos, `PUT /tickets/{id}` | Enviar `{"status": "CHECKED_IN"}` para o 1º ingresso | `200`, `CHECKED_IN` |
 | 6 | Ingressos, `DELETE /tickets/{id}` | Cancelar o 2º ingresso | `200`, `CANCELLED` |
 | 7 | Eventos, `GET /events/{id}` | Consultar o evento novamente | `available_spots: 1`, `PUBLISHED` |
-| 8 | `/metrics` e logs | Abrir as métricas e os logs dos contêineres | Contadores de ingressos e operações registradas |
+| 8 | [Grafana](http://localhost:8080/grafana/) | Abrir o painel inicial | Serviços no ar, ingressos, vagas, requisições, latência e erros |
+| 9 | [Prometheus](http://localhost:8080/prometheus/targets) | Abrir os alvos da coleta | `events-service` e `tickets-service` como `UP` |
+| 10 | Logs | `docker compose logs api-gateway events-service tickets-service` | Operações registradas com o mesmo `X-Correlation-Id` |
 
 ### Por `curl`
 
@@ -271,6 +289,7 @@ events-tickets-ms/
 ├── README.md
 ├── docker-compose.yml        # Orquestração dos contêineres
 ├── gateway/                  # Configuração do API Gateway (NGINX)
+├── observability/            # Configuração do Prometheus e do Grafana
 ├── docs/                     # Documentação do projeto
 └── microservices/
     ├── events-service/       # Python + FastAPI

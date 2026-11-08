@@ -83,6 +83,12 @@ O edital pontua o gateway. O `api-gateway` publica a porta `8080`; serviços e b
 
 Os dois serviços tinham `/docs`, `/health` e `/metrics`, que colidiriam em uma única porta. O Swagger agora é servido em `/docs/events` e `/docs/tickets`, diretamente pelos serviços, sem reescrita de URL, o que mantém o "Try it out" funcionando pelo gateway. Saúde e métricas são publicadas em `/health/{events,tickets}` e `/metrics/{events,tickets}`.
 
+## D15 — Prometheus e Grafana provisionados e atrás do gateway
+
+**Status:** confirmada pelo autor (uso das ferramentas). O acesso pelo gateway e o modo anônimo são provisórios.
+
+O edital pede coleta por ferramentas especializadas. O Prometheus coleta `/metrics` dos dois serviços a cada 5 s, pela rede interna, e o Grafana já sobe com fonte de dados e painel definidos em arquivos, sem passo manual. Os dois são acessados por `/prometheus/` e `/grafana/`, mantendo a porta única da D13. O Grafana abre sem login, somente leitura, para simplificar a demonstração; editar exige `admin`/`admin`, credencial exclusiva do ambiente local.
+
 ## D12 — `PUT /tickets/:id` parcial e estrito
 
 **Status:** provisória.

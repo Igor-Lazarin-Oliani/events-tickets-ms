@@ -13,7 +13,7 @@ Visão do que existe e do que está previsto. A especificação completa está e
 | 3 | `docker-compose.yml` com 4 contêineres | Concluída e validada |
 | 4 | `README.md` e roteiro de demonstração | Concluída e validada |
 | 5 | API Gateway NGINX | Concluída e validada |
-| 6 | Prometheus e Grafana | Não iniciada |
+| 6 | Prometheus e Grafana | Concluída e validada |
 | 7 | Mensageria com RabbitMQ (bônus) | Não iniciada |
 
 Atualize esta tabela ao concluir cada fase.
@@ -29,10 +29,17 @@ flowchart TB
         tickets["tickets-service<br/>NestJS :3000"]
         eventsdb[("events-db<br/>events_db")]
         ticketsdb[("tickets-db<br/>tickets_db")]
+        prometheus["prometheus<br/>:9090"]
+        grafana["grafana<br/>:3000"]
     end
     cliente -->|":8080"| gateway
     gateway --> events
     gateway --> tickets
+    gateway --> grafana
+    gateway --> prometheus
+    grafana --> prometheus
+    prometheus -.->|"coleta /metrics"| events
+    prometheus -.->|"coleta /metrics"| tickets
     tickets -->|"HTTP REST síncrono"| events
     events --> eventsdb
     tickets --> ticketsdb
@@ -45,6 +52,8 @@ flowchart TB
 | `events-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `events_db` |
 | `tickets-service` | Node.js 20, NestJS, TypeORM | Nenhuma | 3000 | Inscrições e ingressos |
 | `tickets-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `tickets_db` |
+| `prometheus` | Prometheus 2.55 | Nenhuma | 9090 | Coleta e armazenamento de métricas |
+| `grafana` | Grafana 11.4 | Nenhuma | 3000 | Painéis de telemetria |
 
 ## Fronteiras entre os serviços
 
@@ -54,7 +63,7 @@ flowchart TB
 
 ## Ordem de inicialização
 
-`events-db` e `tickets-db` saudáveis → `events-service` saudável → `tickets-service` saudável → `api-gateway`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
+`events-db` e `tickets-db` saudáveis → `events-service` saudável → `tickets-service` saudável → `api-gateway` e `prometheus` → `grafana`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
 
 ## Configuração
 
@@ -69,7 +78,9 @@ Os valores padrão ficam no `docker-compose.yml`, para que a avaliação não de
 
 ## Observabilidade
 
-- `GET /health` e `GET /metrics` (formato Prometheus) nos dois serviços, sem contêiner de Prometheus.
+- `GET /health` e `GET /metrics` (formato Prometheus) nos dois serviços.
+- O Prometheus coleta as métricas a cada 5 s (`observability/prometheus/prometheus.yml`).
+- O Grafana sobe com fonte de dados e painel provisionados (`observability/grafana/`), e o painel "Visão Geral" é a página inicial.
 - Métricas de requisições e latência nos dois serviços, além de contadores de ingressos emitidos e cancelados no `tickets-service`.
 - Logs estruturados com método, rota, status e duração em milissegundos.
 - O cabeçalho `X-Correlation-Id` é gerado ou reaproveitado pelo `api-gateway`, repassado aos serviços e impresso nos logs de todos eles (D7).

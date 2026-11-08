@@ -342,7 +342,7 @@ Contêiner `api-gateway` (NGINX) como única porta de entrada, em `8080`. Servi�
 
 ### 🔹 FASE 6: Observabilidade
 
-Contêineres `prometheus` e `grafana`, com coleta das métricas dos dois serviços e painel já configurado no repositório, sem passo manual.
+Contêineres `prometheus` e `grafana`, com coleta das métricas dos dois serviços e painel já configurado no repositório, sem passo manual. Ambos são acessados pelo gateway, em `/prometheus/` e `/grafana/` (D15).
 
 ### 🔹 FASE 7: Mensageria Assíncrona
 

@@ -15,6 +15,8 @@ Este documento deve continuar consistente com o Swagger em `/docs/events` e `/do
 | `/docs/events`, `/docs/tickets` | Swagger de cada serviço |
 | `/health/events`, `/health/tickets` | `GET /health` de cada serviço |
 | `/metrics/events`, `/metrics/tickets` | `GET /metrics` de cada serviço |
+| `/prometheus/` | Interface do Prometheus |
+| `/grafana/` | Painéis do Grafana |
 | `/gateway/health` | Saúde do próprio gateway |
 
 `PATCH /events/{id}/reserve-spot` e `release-spot` são internas: só o `tickets-service` as alcança, pela rede Docker. As rotas das tabelas abaixo são as de cada serviço.
