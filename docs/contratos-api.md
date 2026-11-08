@@ -1,6 +1,6 @@
 # Contratos da API
 
-Regras de comportamento e erros dos dois serviços. Os campos das tabelas estão nas seções 5.1 e 5.2 do [prompt.md](prompt.md). As referências D1 a D8 estão em [decisoes.md](decisoes.md).
+Regras de comportamento e erros dos dois serviços. Os campos das tabelas estão nas seções 5.1 e 5.2 do [prompt.md](prompt.md). As referências no formato D1, D2 etc. estão em [decisoes.md](decisoes.md).
 
 Enquanto os serviços não existirem, este documento é o contrato planejado. Depois, ele deve continuar consistente com o Swagger em `/docs`.
 
@@ -33,7 +33,7 @@ Enquanto os serviços não existirem, este documento é o contrato planejado. De
 
 | Método e rota | Sucesso | Erros |
 |---|---|---|
-| `POST /tickets` | `201` | `400`, `404`, `409`, `503` |
+| `POST /tickets` | `201` | `400`, `404`, `409`, `500`, `503` |
 | `GET /tickets?event_id=&participant_email=&status=` | `200` | `400` |
 | `GET /tickets/:id` (UUID ou `ticket_code`) | `200` | `404` |
 | `PUT /tickets/:id` | `200` | `400`, `404`, `409` |
@@ -44,8 +44,9 @@ Enquanto os serviços não existirem, este documento é o contrato planejado. De
 
 - `ticket_code` tem o formato `EVT-2026-XXXXXX` (6 caracteres alfanuméricos maiúsculos). Em caso de colisão, gera outro código.
 - **Duplicidade (D3):** só um ingresso não cancelado por `(event_id, participant_document)`. Uma nova inscrição é aceita depois do cancelamento.
-- **`PUT` (D5):**
-  - Aceita dados do participante, `modality_tier` e `status: CHECKED_IN`; `event_id` não muda.
+- **`PUT` (D5, D12):**
+  - Altera somente os campos enviados; campos desconhecidos e `null` respondem `400`.
+  - Aceita dados do participante, `modality_tier` e `status: CHECKED_IN`; enviar `event_id` responde `400`.
   - `CHECKED_IN` só a partir de `CONFIRMED`; outra origem responde `409`.
   - `status: CANCELLED` responde `400`, porque o cancelamento é feito por `DELETE`.
   - Ingresso `CANCELLED` não é editável (`409`).
@@ -82,8 +83,10 @@ sequenceDiagram
 | Situação | Resposta |
 |---|---|
 | Evento inexistente | `404 Event not found` |
-| Status diferente de `PUBLISHED` | `400 Event is not open for registrations` |
-| Sem vagas, na consulta ou na reserva | `409 Event is sold out` |
+| Status `CANCELLED` ou `FINISHED` | `400 Event is not open for registrations` |
+| Status `SOLD_OUT` ou sem vagas, na consulta ou na reserva (D11) | `409 Event is sold out` |
+| Evento fechado entre a consulta e a reserva | `409 Event is not open for registrations` |
+| Falha ao salvar o ingresso | `500 Could not issue ticket`, com a vaga devolvida |
 | Participante já inscrito | `409 Participant already registered for this event` |
 | `events-service` indisponível ou timeout | `503 Events service unavailable` |
 

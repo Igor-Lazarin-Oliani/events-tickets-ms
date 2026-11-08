@@ -79,6 +79,11 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **Rótulo de métrica usa o padrão da rota** (`/tickets/:id`), nunca a URL real, para não explodir a cardinalidade.
 - **Testes do `events-service` usam SQLite em memória.** Não provam concorrência nem `FOR UPDATE`; isso só se confirma no PostgreSQL. Evite SQL que não exista nos dois, como `RETURNING` em SQLite antigo.
 - **Healthcheck do PostgreSQL usa `pg_isready -h localhost`.** Sem `-h`, o teste pode passar no servidor temporário de inicialização da imagem. O `init_db` ainda tenta reconectar por 30 s.
+- **`SOLD_OUT` responde `409`, nunca `400`.** Em `assertEventOpen`, ele é verificado antes da regra de status geral (D11).
+- **`correlationMiddleware` fica no `app.use` antes do `listen`.** O contexto do `AsyncLocalStorage` precisa cobrir toda a requisição até o `EventsClientService`.
+- **`@IsOptional` aceita `null`.** Em coluna obrigatória use `IfPresent`, como no `UpdateTicketDto`, senão o `null` só falha no banco, com `500`.
+- **Testes Jest simulam o banco e o Serviço A.** Índice único, condições do `UPDATE` e concorrência só se confirmam com PostgreSQL real.
+- **OpenAPI do `tickets-service` fica em `/docs-json`;** a do `events-service`, em `/openapi.json`.
 - **Toda chamada ao `events-service` tem timeout.** Sem resposta vira `503`, nunca requisição pendurada.
 - **Nunca logue `participant_document` nem `participant_email`:** os logs são exibidos ao vivo na apresentação.
 

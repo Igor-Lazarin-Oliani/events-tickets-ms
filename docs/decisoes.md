@@ -64,3 +64,15 @@ As tabelas são criadas por `create_all` e `synchronize: true`, como definido no
 **Status:** provisória.
 
 Toda a documentação fica em `docs/`, exceto o `README.md`, previsto na raiz pelo prompt e exibido pelo GitHub na página do repositório.
+
+## D11 — Evento esgotado responde `409`, e não `400`
+
+**Status:** provisória. Corrige a ordem das validações da versão original do prompt.
+
+Um evento esgotado tem status `SOLD_OUT`. Na ordem original, ele cairia na regra `status !== PUBLISHED` e responderia `400`, mas o roteiro da demonstração exige `409 Event is sold out` no terceiro ingresso. Por isso, `SOLD_OUT` é verificado antes; `CANCELLED` e `FINISHED` continuam respondendo `400`.
+
+## D12 — `PUT /tickets/:id` parcial e estrito
+
+**Status:** provisória.
+
+O `PUT` altera apenas os campos enviados e recusa com `400` campos desconhecidos, `event_id`, `null` e qualquer `status` diferente de `CHECKED_IN`. O `ValidationPipe` global usa `forbidNonWhitelisted`, então o mesmo vale para os outros corpos e filtros da API.

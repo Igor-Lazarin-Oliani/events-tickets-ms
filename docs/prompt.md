@@ -140,8 +140,8 @@ Unifica o conceito de inscrição e ingresso. Cada registro representa a partici
 2. **Validação no Serviço A (`EventsClientService` no NestJS):**
    * O `tickets-service` faz `GET http://events-service:8000/events/{event_id}`.
    * Se o evento não existir (`404`), lança `NotFoundException` (`404 Event not found`).
-   * Se `status !== "PUBLISHED"`, lança `BadRequestException` (`400 Event is not open for registrations`).
-   * Se `available_spots <= 0`, lança `ConflictException` (`409 Event is sold out`).
+   * Se `status === "SOLD_OUT"` ou `available_spots <= 0` em evento publicado, lança `ConflictException` (`409 Event is sold out`) (D11).
+   * Se `status` for `"CANCELLED"` ou `"FINISHED"`, lança `BadRequestException` (`400 Event is not open for registrations`).
    * Se já existir ingresso não cancelado com o mesmo `participant_document` no evento, lança `ConflictException` (`409 Participant already registered for this event`) (D3).
 3. **Reserva de Vaga no Serviço A:**
    * O `tickets-service` envia `PATCH http://events-service:8000/events/{event_id}/reserve-spot`.
@@ -219,7 +219,8 @@ events-tickets-ms/
                 ├── metrics.module.ts
                 ├── metrics.service.ts        # Contadores e histogramas HTTP / Negócio (prom-client)
                 ├── metrics.controller.ts     # Exposição de GET /metrics e GET /health
-                └── logging.interceptor.ts    # Interceptor NestJS para logar latência e tráfego HTTP
+                ├── logging.interceptor.ts    # Interceptor NestJS para logar latência e tráfego HTTP
+                └── telemetry.ts              # Logs estruturados e X-Correlation-Id
 ```
 
 ## 8. Plano de Execução Detalhado Passo a Passo (Fases de Desenvolvimento)
