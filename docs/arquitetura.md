@@ -11,7 +11,7 @@ Visão do que existe e do que está previsto. A especificação completa está e
 | 1 | `events-service` (FastAPI + PostgreSQL) | Concluída e validada em PostgreSQL 16; imagem Docker ainda não construída |
 | 2 | `tickets-service` (NestJS + PostgreSQL) | Concluída e validada em PostgreSQL 16; imagem Docker ainda não construída |
 | 3 | `docker-compose.yml` com 4 contêineres | Não iniciada |
-| 4 | `README.md` e roteiro de demonstração | Não iniciada |
+| 4 | `README.md` e roteiro de demonstração | `README.md` inicial criado; guia final e roteiro pendentes |
 
 Atualize esta tabela ao concluir cada fase.
 
