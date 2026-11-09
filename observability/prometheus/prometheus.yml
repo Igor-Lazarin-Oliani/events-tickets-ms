@@ -3,12 +3,12 @@ global:
   evaluation_interval: 5s
 
 scrape_configs:
-  - job_name: events-service
+  - job_name: events-tickets-service
     metrics_path: /metrics
     static_configs:
-      - targets: ["events-service:8000"]
+      - targets: ["events-tickets-service:3000"]
 
-  - job_name: tickets-service
+  - job_name: logs-service
     metrics_path: /metrics
     static_configs:
-      - targets: ["tickets-service:3000"]
+      - targets: ["logs-service:8000"]

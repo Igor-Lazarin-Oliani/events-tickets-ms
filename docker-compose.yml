@@ -9,9 +9,9 @@ services:
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      events-service:
+      events-tickets-service:
         condition: service_healthy
-      tickets-service:
+      logs-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/gateway/health"]
@@ -21,18 +21,36 @@ services:
     networks:
       - events-tickets-network
 
-  events-db:
+  events-tickets-db:
     image: postgres:16-alpine
-    container_name: events-db
+    container_name: events-tickets-db
     environment:
-      POSTGRES_DB: events_db
-      POSTGRES_USER: events_user
-      POSTGRES_PASSWORD: events_pass
+      POSTGRES_DB: events_tickets_db
+      POSTGRES_USER: events_tickets_user
+      POSTGRES_PASSWORD: events_tickets_pass
     volumes:
-      - events_pgdata:/var/lib/postgresql/data
+      - events_tickets_pgdata:/var/lib/postgresql/data
     healthcheck:
       # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
-      test: ["CMD-SHELL", "pg_isready -h localhost -U events_user -d events_db"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -U events_tickets_user -d events_tickets_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - events-tickets-network
+
+  logs-db:
+    image: postgres:16-alpine
+    container_name: logs-db
+    environment:
+      POSTGRES_DB: logs_db
+      POSTGRES_USER: logs_user
+      POSTGRES_PASSWORD: logs_pass
+    volumes:
+      - logs_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U logs_user -d logs_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -59,16 +77,41 @@ services:
     networks:
       - events-tickets-network
 
-  events-service:
-    build: ./microservices/events-service
-    container_name: events-service
+  events-tickets-service:
+    build: ./microservices/events-tickets-service
+    container_name: events-tickets-service
     environment:
-      DATABASE_URL: postgresql+psycopg2://events_user:events_pass@events-db:5432/events_db
+      DATABASE_URL: postgresql://events_tickets_user:events_tickets_pass@events-tickets-db:5432/events_tickets_db
+      RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
+      PORT: "3000"
+      SERVICE_NAME: events-tickets-service
+      LOGS_SERVICE_URL: http://logs-service:8000
+      LOGS_SERVICE_TIMEOUT_MS: "3000"
+    # Sem depender do logs-service: vendas e inscrições funcionam mesmo com ele fora do ar.
+    depends_on:
+      events-tickets-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - events-tickets-network
+
+  logs-service:
+    build: ./microservices/logs-service
+    container_name: logs-service
+    environment:
+      DATABASE_URL: postgresql+psycopg2://logs_user:logs_pass@logs-db:5432/logs_db
       RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
       PORT: "8000"
-      SERVICE_NAME: events-service
+      SERVICE_NAME: logs-service
     depends_on:
-      events-db:
+      logs-db:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -79,50 +122,6 @@ services:
         - python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    networks:
-      - events-tickets-network
-
-  tickets-db:
-    image: postgres:16-alpine
-    container_name: tickets-db
-    environment:
-      POSTGRES_DB: tickets_db
-      POSTGRES_USER: tickets_user
-      POSTGRES_PASSWORD: tickets_pass
-    volumes:
-      - tickets_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
-      test: ["CMD-SHELL", "pg_isready -h localhost -U tickets_user -d tickets_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - events-tickets-network
-
-  tickets-service:
-    build: ./microservices/tickets-service
-    container_name: tickets-service
-    environment:
-      DATABASE_URL: postgresql://tickets_user:tickets_pass@tickets-db:5432/tickets_db
-      RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
-      PORT: "3000"
-      SERVICE_NAME: tickets-service
-      EVENTS_SERVICE_URL: http://events-service:8000
-      EVENTS_SERVICE_TIMEOUT_MS: "5000"
-    depends_on:
-      tickets-db:
-        condition: service_healthy
-      events-service:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -142,9 +141,9 @@ services:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     depends_on:
-      events-service:
+      events-tickets-service:
         condition: service_healthy
-      tickets-service:
+      logs-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/prometheus/-/healthy"]
@@ -192,7 +191,7 @@ networks:
     driver: bridge
 
 volumes:
-  events_pgdata:
-  tickets_pgdata:
+  events_tickets_pgdata:
+  logs_pgdata:
   prometheus_data:
   rabbitmq_data:

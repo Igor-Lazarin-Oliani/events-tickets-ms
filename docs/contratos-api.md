@@ -2,7 +2,7 @@
 
 Regras de comportamento e erros dos dois serviços. Os campos das tabelas estão nas seções 5.1 e 5.2 do [prompt.md](prompt.md). As referências no formato D1, D2 etc. estão em [decisoes.md](decisoes.md).
 
-Este documento deve continuar consistente com o Swagger em `/docs/events` e `/docs/tickets`.
+Este documento deve continuar consistente com o Swagger em `/docs/events-tickets` e `/docs/logs`.
 
 ## API Gateway (porta 8080)
 
@@ -10,58 +10,59 @@ Este documento deve continuar consistente com o Swagger em `/docs/events` e `/do
 
 | Rota pública | Destino |
 |---|---|
-| `/events`, `/events/{id}` | `events-service` |
-| `/tickets`, `/tickets/{id}` | `tickets-service` |
-| `/docs/events`, `/docs/tickets` | Swagger de cada serviço |
-| `/health/events`, `/health/tickets` | `GET /health` de cada serviço |
-| `/metrics/events`, `/metrics/tickets` | `GET /metrics` de cada serviço |
+| `/events`, `/events/{id}`, `/events/{id}/history` | `events-tickets-service` |
+| `/tickets`, `/tickets/{id}`, `/tickets/{id}/history` | `events-tickets-service` |
+| `/logs`, `/logs/{id}` | `logs-service` |
+| `/docs/events-tickets`, `/docs/logs` | Swagger de cada serviço |
+| `/health/events-tickets`, `/health/logs` | `GET /health` de cada serviço |
+| `/metrics/events-tickets`, `/metrics/logs` | `GET /metrics` de cada serviço |
 | `/prometheus/` | Interface do Prometheus |
 | `/grafana/` | Painéis do Grafana |
 | `/rabbitmq/` | Interface de gerenciamento do RabbitMQ |
 | `/gateway/health` | Saúde do próprio gateway |
 
-`PATCH /events/{id}/reserve-spot` e `release-spot` são internas: só o `tickets-service` as alcança, pela rede Docker. As rotas das tabelas abaixo são as de cada serviço.
+As rotas das tabelas abaixo são as de cada serviço.
 
-## `events-service` (porta 8000)
+## `events-tickets-service` (porta 3000)
+
+Corpo, filtro ou UUID inválido responde `400` em todas as rotas (D12, D23).
+
+### Eventos
 
 | Método e rota | Sucesso | Erros |
 |---|---|---|
-| `POST /events` | `201` | `422` |
-| `GET /events?category=&status=` | `200` | `422` |
-| `GET /events/{id}` | `200` | `404`, `422` |
-| `PUT /events/{id}` | `200` | `404`, `409`, `422` |
-| `DELETE /events/{id}` | `204` | `404`, `422` |
-| `PATCH /events/{id}/reserve-spot` | `200` | `404`, `409`, `422` |
-| `PATCH /events/{id}/release-spot` | `200` | `404`, `422` |
-| `GET /health` · `GET /metrics` | `200` | |
+| `POST /events` | `201` | `400` |
+| `GET /events?category=&status=` | `200` | `400` |
+| `GET /events/{id}` | `200` | `400`, `404` |
+| `PUT /events/{id}` | `200` | `400`, `404`, `409` |
+| `DELETE /events/{id}` | `204` | `400`, `404` |
+| `GET /events/{id}/history` | `200` | `400`, `404`, `503` |
 
-### Regras de eventos
+#### Regras de eventos
 
-- `max_capacity > 0` e `end_at` posterior a `start_at`.
-- `start_at` e `end_at` exigem fuso horário (`2026-11-20T08:00:00-04:00` ou sufixo `Z`); sem fuso, a API responde `422` (D10).
+- `max_capacity > 0` e `end_at` posterior a `start_at`; senão, `400 end_at must be after start_at`.
+- `start_at` e `end_at` exigem fuso horário (`2026-11-20T08:00:00-04:00` ou sufixo `Z`); sem fuso, a API responde `400` (D10).
 - O `PUT` altera somente os campos enviados, e enviar `null` só é aceito em `description` e `metadata_info` (D10).
-- `GET /health` responde `503` quando o banco está indisponível.
 - Na criação, `available_spots = max_capacity` e `status = PUBLISHED`. O cliente não define `available_spots` diretamente.
-- **`reserve-spot`:** só com `status = PUBLISHED` e `available_spots > 0`; caso contrário, `409 Event is sold out` ou `409 Event is not open for registrations`. Ao chegar a `0`, o status passa para `SOLD_OUT`.
-- **`release-spot`:** incrementa até `max_capacity`. No limite, responde `200` sem alterar e registra aviso no log. Com vagas livres, `SOLD_OUT` volta a `PUBLISHED`; os status `CANCELLED` e `FINISHED` não mudam.
-- **Mudança de capacidade (D2):** `ocupadas = max_capacity - available_spots`. Com nova capacidade menor que `ocupadas`, responde `409`; caso contrário, `available_spots = nova capacidade - ocupadas`. O status alterna entre `PUBLISHED` e `SOLD_OUT` conforme as vagas livres.
+- **Mudança de capacidade (D2):** `ocupadas = max_capacity - available_spots`. Com nova capacidade menor que `ocupadas`, responde `409`; caso contrário, `available_spots = nova capacidade - ocupadas`. O status alterna entre `PUBLISHED` e `SOLD_OUT` conforme as vagas livres. O `PUT` trava a linha com `SELECT ... FOR UPDATE`.
 - **Evento cancelado (D17):** `CANCELLED` é um estado final; mudar para outro status responde `409 Cancelled event cannot be reopened`. Os demais campos continuam editáveis.
-- **`DELETE` de evento com ingressos ativos (D6, D16):** é permitido. Os ingressos são cancelados de forma assíncrona e seguem com o `event_snapshot`.
+- **Cancelar ou remover evento (D22):** na mesma transação, todos os ingressos ativos passam para `CANCELLED`, sem devolver vagas. A resposta já reflete o cancelamento. Os ingressos mantêm o `event_snapshot`.
 
-## `tickets-service` (porta 3000)
+### Ingressos
 
 | Método e rota | Sucesso | Erros |
 |---|---|---|
-| `POST /tickets` | `201` | `400`, `404`, `409`, `500`, `503` |
+| `POST /tickets` | `201` | `400`, `404`, `409`, `500` |
 | `GET /tickets?event_id=&participant_email=&status=` | `200` | `400` |
-| `GET /tickets/:id` (UUID ou `ticket_code`) | `200` | `404` |
-| `PUT /tickets/:id` | `200` | `400`, `404`, `409` |
-| `DELETE /tickets/:id` | `200` | `400`, `404`, `409`, `503` |
-| `GET /health` · `GET /metrics` | `200` | |
+| `GET /tickets/{id}` (UUID ou `ticket_code`) | `200` | `404` |
+| `PUT /tickets/{id}` | `200` | `400`, `404`, `409` |
+| `DELETE /tickets/{id}` | `200` | `400`, `404`, `409` |
+| `GET /tickets/{id}/history` (UUID ou `ticket_code`) | `200` | `404`, `503` |
+| `GET /health` · `GET /metrics` | `200` | `503` no `/health` sem banco |
 
-### Regras de ingressos
+#### Regras de ingressos
 
-- `ticket_code` tem o formato `EVT-2026-XXXXXX` (6 caracteres alfanuméricos maiúsculos). Em caso de colisão, gera outro código.
+- `ticket_code` tem o formato `EVT-2026-XXXXXX` (6 caracteres alfanuméricos maiúsculos). Em caso de colisão, gera outro código, dentro de um savepoint da mesma transação.
 - **Duplicidade (D3):** só um ingresso não cancelado por `(event_id, participant_document)`. Uma nova inscrição é aceita depois do cancelamento.
 - **`PUT` (D5, D12):**
   - Altera somente os campos enviados; campos desconhecidos e `null` respondem `400`.
@@ -70,32 +71,33 @@ Este documento deve continuar consistente com o Swagger em `/docs/events` e `/do
   - `status: CANCELLED` responde `400`, porque o cancelamento é feito por `DELETE`.
   - Ingresso `CANCELLED` não é editável (`409`).
   - Alterar o documento para um já ativo no evento responde `409`.
-- **`DELETE` (D1):** vale para `CONFIRMED` e `CHECKED_IN`, e devolve o ingresso com status `CANCELLED`. Repetir responde `409`.
+- **`DELETE` (D1):** vale para `CONFIRMED` e `CHECKED_IN`, devolve a vaga ao evento na mesma transação e responde com o ingresso `CANCELLED`. Repetir responde `409`.
 
 <a id="fluxos-entre-servicos"></a>
 
-## Fluxos entre serviços
+## Fluxos
 
 ### Emissão: `POST /tickets`
+
+Tudo acontece no `events-tickets-service`, em uma única transação do PostgreSQL (D18).
 
 ```mermaid
 sequenceDiagram
     participant C as Cliente
-    participant T as tickets-service
-    participant E as events-service
-    participant D as tickets_db
-    C->>T: POST /tickets
-    T->>E: GET /events/{id}
-    E-->>T: evento
-    T->>D: verifica duplicidade
-    T->>E: PATCH /events/{id}/reserve-spot
-    E-->>T: vaga reservada
-    T->>D: salva ingresso CONFIRMED
-    alt falha ao salvar
-        T->>E: PATCH /events/{id}/release-spot
-        T-->>C: 409 (duplicidade) ou 500
+    participant S as events-tickets-service
+    participant D as events_tickets_db
+    C->>S: POST /tickets
+    S->>D: consulta o evento e a duplicidade
+    S->>D: BEGIN
+    S->>D: UPDATE events (reserva condicional)
+    S->>D: INSERT tickets (savepoint por tentativa de código)
+    S->>D: INSERT outbox_messages (ticket.issued, event.spot_reserved)
+    alt qualquer falha
+        S->>D: ROLLBACK (a vaga volta sozinha)
+        S-->>C: 409 ou 500
     else sucesso
-        T-->>C: 201 com ingresso
+        S->>D: COMMIT
+        S-->>C: 201 com ingresso
     end
 ```
 
@@ -105,53 +107,119 @@ sequenceDiagram
 | Status `CANCELLED` ou `FINISHED` | `400 Event is not open for registrations` |
 | Status `SOLD_OUT` ou sem vagas, na consulta ou na reserva (D11) | `409 Event is sold out` |
 | Evento fechado entre a consulta e a reserva | `409 Event is not open for registrations` |
-| Falha ao salvar o ingresso | `500 Could not issue ticket`, com a vaga devolvida |
-| Participante já inscrito | `409 Participant already registered for this event` |
-| `events-service` indisponível ou timeout | `503 Events service unavailable` |
+| Participante já inscrito, inclusive em inscrições simultâneas | `409 Participant already registered for this event` |
+| Falha inesperada ao salvar | `500 Could not issue ticket`, sem consumir a vaga |
 
-### Cancelamento: `DELETE /tickets/:id`
+### Cancelamento: `DELETE /tickets/{id}`
 
-1. Atualiza para `CANCELLED` por `UPDATE` condicional (`status <> 'CANCELLED'`). Se nenhuma linha mudar, responde `404` ou `409`, sem devolver vaga.
-2. Chama `release-spot`.
-3. Se o evento não existir mais (`404`), mantém o cancelamento e registra no log (D6).
-4. Se o `events-service` falhar ou esgotar o timeout, restaura o status anterior e responde `503` (D5).
+Em uma única transação:
 
-### Cancelamento ou remoção de evento: mensageria assíncrona (D16)
+1. Atualiza para `CANCELLED` por `UPDATE` condicional (status ainda igual ao lido). Se nenhuma linha mudar, responde `409`, sem devolver vaga.
+2. Devolve a vaga com `UPDATE` condicional (`available_spots < max_capacity`); um evento `SOLD_OUT` volta a `PUBLISHED`.
+3. Grava `ticket.cancelled` e, se a vaga voltou, `event.spot_released`.
+
+Se o evento não existir mais, o cancelamento vale do mesmo jeito, e o log registra `[TICKET CANCELLED WITHOUT EVENT]`.
+
+### Registro de atividades: `events-tickets-service` → RabbitMQ → `logs-service` (D20)
 
 ```mermaid
 sequenceDiagram
     participant C as Cliente
-    participant E as events-service
+    participant S as events-tickets-service
     participant B as RabbitMQ
-    participant T as tickets-service
-    C->>E: PUT /events/{id} (CANCELLED) ou DELETE /events/{id}
-    E->>E: salva o evento e a mensagem na mesma transação
-    E-->>C: resposta imediata
-    E->>B: publica a mensagem pendente (até 1 s depois)
-    B->>T: entrega a mensagem
-    T->>T: cancela os ingressos ativos do evento
-    T->>B: confirma (ack)
+    participant L as logs-service
+    C->>S: qualquer escrita (POST, PUT, DELETE)
+    S->>S: grava a mudança e as mensagens na mesma transação
+    S-->>C: resposta imediata
+    S->>B: publica as pendentes (até 1 s depois), com confirmação
+    B->>L: entrega pela fila logs.activity
+    L->>L: grava o registro (descarta message_id repetido)
+    L->>B: confirma (ack)
 ```
 
 | Item | Valor |
 |---|---|
-| Exchange | `events.exchange` (topic, durável) |
-| Routing keys | `event.cancelled`, `event.deleted` |
-| Fila | `tickets.event-updates` (durável) |
-| Fila de mensagens inválidas | `tickets.event-updates.dlq` |
+| Exchange | `events-tickets.exchange` (topic, durável) |
+| Routing keys | `event.created`, `event.updated`, `event.cancelled`, `event.deleted`, `event.spot_reserved`, `event.spot_released`, `ticket.issued`, `ticket.updated`, `ticket.checked_in`, `ticket.cancelled` |
+| Fila | `logs.activity` (durável), ligada a `event.*` e `ticket.*` |
+| Fila de mensagens inválidas | `logs.activity.dlq` |
+
+| Operação | Mensagens gravadas |
+|---|---|
+| `POST /events` | `event.created` |
+| `PUT /events/{id}` | `event.updated`, ou `event.cancelled` + um `ticket.cancelled` por ingresso ativo |
+| `DELETE /events/{id}` | `event.deleted` + um `ticket.cancelled` por ingresso ativo |
+| `POST /tickets` | `ticket.issued` + `event.spot_reserved` |
+| `PUT /tickets/{id}` | `ticket.checked_in` ou `ticket.updated` |
+| `DELETE /tickets/{id}` | `ticket.cancelled` + `event.spot_released` |
 
 ```json
 {
   "message_id": "5a1e7c2e-9a55-4b2f-8f35-2f1b7e8a4c10",
-  "event_type": "event.cancelled",
-  "event_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "occurred_at": "2026-11-08T20:00:00+00:00",
+  "action": "ticket.issued",
+  "entity_type": "ticket",
+  "entity_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "level": "INFO",
+  "message": "Ticket EVT-2026-A8F9K2 issued",
+  "data": {
+    "ticket_code": "EVT-2026-A8F9K2",
+    "event_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "status": "CONFIRMED",
+    "modality_tier": "ESTUDANTE"
+  },
+  "source": "events-tickets-service",
+  "occurred_at": "2026-11-20T12:00:00.000Z",
   "correlation_id": "demo-123"
 }
 ```
 
+- `level` é `WARNING` em `event.cancelled`, `event.deleted` e `ticket.cancelled`, e `INFO` nas demais.
+- `data` nunca contém nome, e-mail ou documento do participante. Em `ticket.updated`, leva só `changed_fields`.
+- Mensagem inválida, ou com routing key diferente de `action`, vai para a DLQ. Falha do banco devolve a mensagem à fila depois de 5 s.
+
+### Histórico: `events-tickets-service` → HTTP → `logs-service` (D21)
+
+```mermaid
+sequenceDiagram
+    participant C as Cliente
+    participant S as events-tickets-service
+    participant L as logs-service
+    C->>S: GET /tickets/{id}/history
+    S->>S: confirma que o ingresso existe (404 se não)
+    S->>L: GET /logs?entity_type=ticket&entity_id=...&order=asc
+    alt logs-service responde
+        L-->>S: registros em ordem cronológica
+        S-->>C: 200 { entity_type, entity_id, entries }
+    else fora do ar ou timeout de 3 s
+        S-->>C: 503 Logs service unavailable
+    end
+```
+
+Registros arquivados não aparecem no histórico.
+
+## `logs-service` (porta 8000)
+
+Dados inválidos e campos não editáveis respondem `422`, padrão do FastAPI.
+
+| Método e rota | Sucesso | Erros |
+|---|---|---|
+| `POST /logs` | `201` | `422` |
+| `GET /logs?entity_type=&entity_id=&action=&level=&status=&source=&correlation_id=&include_archived=&order=&limit=&offset=` | `200` | `422` |
+| `GET /logs/{id}` | `200` | `404`, `422` |
+| `PUT /logs/{id}` | `200` | `404`, `409`, `422` |
+| `DELETE /logs/{id}` | `200` | `404`, `409`, `422` |
+| `GET /health` · `GET /metrics` | `200` | `503` no `/health` sem banco |
+
+### Regras dos registros (D19)
+
+- **`POST /logs`** cria um registro manual: `action` no formato `<entidade>.<verbo>` (ex.: `incident.reported`), `message` obrigatória, `level` (`INFO`, `WARNING`, `ERROR`; padrão `INFO`), `entity_type` e `entity_id` opcionais (o id exige o tipo), `data`, `correlation_id`, `occurred_at` com fuso (padrão: agora) e `notes`. `source` padrão é `manual`. O registro nasce com `status: NEW` e `message_id: null`.
+- **`GET /logs`** exclui os arquivados, a menos que `include_archived=true`. Ordena por `occurred_at` (`order=desc` por padrão; `asc` é a cronológica). `limit` vai de 1 a 500 (padrão 100), com `offset`.
+- **`GET /logs/{id}`** devolve o registro mesmo arquivado, com `archived_at` preenchido.
+- **`PUT /logs/{id}`** altera só `status` (`NEW`, `REVIEWED`, `RESOLVED`) e `notes` (aceita `null`). Qualquer outro campo, ou `status: null`, responde `422`. Registro arquivado responde `409 Archived log entry cannot be modified`.
+- **`DELETE /logs/{id}`** arquiva: preenche `archived_at` e responde `200` com o registro. Repetir responde `409 Log entry is already archived`.
+
 ## Limitações conhecidas
 
-Um ingresso cuja reserva terminou antes do cancelamento do evento, mas que só foi salvo depois de a mensagem ser processada, pode ficar ativo. A janela é de milissegundos diante do intervalo de publicação de até 1 s.
-
-Com timeout em `reserve-spot` ou `release-spot`, o `tickets-service` não sabe se o Serviço A aplicou a operação. Corrigir isso exigiria chave de idempotência ou mensageria, fora do escopo síncrono do trabalho. Ver D5.
+- **Histórico eventualmente consistente:** um registro aparece no histórico cerca de 1 s depois da operação, o tempo de a outbox publicar e o `logs-service` consumir. Com o broker ou o `logs-service` fora do ar, o atraso dura até eles voltarem; nada se perde.
+- **Ordem entre registros do mesmo milissegundo:** atividades gravadas na mesma transação para entidades diferentes (por exemplo, `ticket.issued` e `event.spot_reserved`) podem ter o mesmo `occurred_at`. O histórico de uma entidade não é afetado.
+- **Sem autenticação:** qualquer cliente pode criar, editar a triagem e arquivar registros.

@@ -8,13 +8,14 @@ Visão do que existe e do que está previsto. A especificação completa está e
 
 | Fase | Entrega | Estado |
 |---|---|---|
-| 1 | `events-service` (FastAPI + PostgreSQL) | Concluída e validada em contêiner |
-| 2 | `tickets-service` (NestJS + PostgreSQL) | Concluída e validada em contêiner |
+| 1 | `events-service` (FastAPI + PostgreSQL) | Concluída; incorporada ao `events-tickets-service` na fase 8 |
+| 2 | `tickets-service` (NestJS + PostgreSQL) | Concluída; incorporada ao `events-tickets-service` na fase 8 |
 | 3 | `docker-compose.yml` com 4 contêineres | Concluída e validada |
 | 4 | `README.md` e roteiro de demonstração | Concluída e validada |
 | 5 | API Gateway NGINX | Concluída e validada |
 | 6 | Prometheus e Grafana | Concluída e validada |
 | 7 | Mensageria com RabbitMQ (bônus) | Concluída e validada |
+| 8 | Reestruturação: `events-tickets-service` (NestJS) + `logs-service` (Python) | Concluída e validada em contêiner |
 
 Atualize esta tabela ao concluir cada fase.
 
@@ -25,51 +26,52 @@ flowchart TB
     cliente["Swagger UI / curl / Postman"]
     subgraph rede["Rede Docker: events-tickets-network"]
         gateway["api-gateway<br/>NGINX :80"]
-        events["events-service<br/>FastAPI :8000"]
-        tickets["tickets-service<br/>NestJS :3000"]
-        eventsdb[("events-db<br/>events_db")]
-        ticketsdb[("tickets-db<br/>tickets_db")]
+        core["events-tickets-service<br/>NestJS :3000"]
+        logs["logs-service<br/>FastAPI :8000"]
+        coredb[("events-tickets-db<br/>events_tickets_db")]
+        logsdb[("logs-db<br/>logs_db")]
+        rabbitmq[["rabbitmq<br/>:5672"]]
         prometheus["prometheus<br/>:9090"]
         grafana["grafana<br/>:3000"]
-        rabbitmq[["rabbitmq<br/>:5672"]]
     end
     cliente -->|":8080"| gateway
-    gateway --> events
-    gateway --> tickets
+    gateway --> core
+    gateway --> logs
     gateway --> grafana
     gateway --> prometheus
-    grafana --> prometheus
-    prometheus -.->|"coleta /metrics"| events
-    prometheus -.->|"coleta /metrics"| tickets
     gateway --> rabbitmq
-    events -->|"publica event.cancelled / event.deleted"| rabbitmq
-    rabbitmq -->|"entrega"| tickets
-    tickets -->|"HTTP REST síncrono"| events
-    events --> eventsdb
-    tickets --> ticketsdb
+    core --> coredb
+    logs --> logsdb
+    core -->|"publica atividades (outbox)"| rabbitmq
+    rabbitmq -->|"fila logs.activity"| logs
+    core -->|"HTTP REST síncrono: GET /logs (histórico)"| logs
+    grafana --> prometheus
+    prometheus -.->|"coleta /metrics"| core
+    prometheus -.->|"coleta /metrics"| logs
 ```
 
 | Contêiner | Tecnologia | Porta no host | Porta interna | Responsabilidade |
 |---|---|---|---|---|
 | `api-gateway` | NGINX 1.27 | 8080 | 80 | Entrada única e roteamento |
-| `events-service` | Python 3.11, FastAPI, SQLAlchemy 2 | Nenhuma | 8000 | Eventos e capacidade |
-| `events-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `events_db` |
-| `tickets-service` | Node.js 20, NestJS, TypeORM | Nenhuma | 3000 | Inscrições e ingressos |
-| `tickets-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `tickets_db` |
+| `events-tickets-service` | Node.js 20, NestJS, TypeORM | Nenhuma | 3000 | Eventos, vagas, inscrições, ingressos e check-in |
+| `events-tickets-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `events_tickets_db` |
+| `logs-service` | Python 3.11, FastAPI, SQLAlchemy 2 | Nenhuma | 8000 | Registro de atividades (auditoria) |
+| `logs-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `logs_db` |
+| `rabbitmq` | RabbitMQ 3.13 | Nenhuma | 5672, 15672 | Mensageria assíncrona |
 | `prometheus` | Prometheus 2.55 | Nenhuma | 9090 | Coleta e armazenamento de métricas |
 | `grafana` | Grafana 11.4 | Nenhuma | 3000 | Painéis de telemetria |
-| `rabbitmq` | RabbitMQ 3.13 | Nenhuma | 5672, 15672 | Mensageria assíncrona |
 
 ## Fronteiras entre os serviços
 
-- O `events-service` é a fonte da verdade sobre capacidade e não conhece ingressos.
-- O `tickets-service` guarda `event_id` como referência lógica, sem chave estrangeira, e copia os dados do evento em `event_snapshot` no momento da inscrição.
-- A dependência síncrona é unidirecional: só o `tickets-service` chama o `events-service`.
-- No sentido inverso, o `events-service` só publica mensagens no RabbitMQ, sem conhecer quem as consome (D16).
+- O `events-tickets-service` é a fonte da verdade sobre eventos, vagas e ingressos. Reserva e emissão, cancelamento e devolução, e o cancelamento em cascata de um evento acontecem em transações locais (D18, D22).
+- O `logs-service` guarda o registro das atividades e não conhece as regras de eventos e ingressos: só recebe fatos já ocorridos e permite consultá-los e fazer a triagem (D19).
+- Gravação é assíncrona: o `events-tickets-service` grava as atividades na outbox e as publica no RabbitMQ, sem saber quem as consome (D20).
+- Consulta é síncrona: só o `events-tickets-service` chama o `logs-service` por HTTP, nas rotas de histórico (D21). O `logs-service` não chama o `events-tickets-service`.
+- Cada serviço acessa só o próprio banco. Se o `logs-service` cair, vendas e inscrições seguem; as atividades esperam na outbox ou na fila.
 
 ## Ordem de inicialização
 
-`events-db`, `tickets-db` e `rabbitmq` saudáveis → `events-service` saudável → `tickets-service` saudável → `api-gateway` e `prometheus` → `grafana`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir.
+`events-tickets-db`, `logs-db` e `rabbitmq` saudáveis → `events-tickets-service` e `logs-service` saudáveis, em paralelo → `api-gateway` e `prometheus` → `grafana`. Cada dependência usa `depends_on` com `condition: service_healthy`, e os serviços criam as próprias tabelas ao subir. O `events-tickets-service` não depende do `logs-service` para subir.
 
 ## Configuração
 
@@ -77,16 +79,19 @@ Os valores padrão ficam no `docker-compose.yml`, para que a avaliação não de
 
 | Serviço | Variável | Uso |
 |---|---|---|
-| `events-service` | `DATABASE_URL`, `RABBITMQ_URL`, `PORT`, `SERVICE_NAME` | Banco, broker e identificação |
-| `tickets-service` | `DATABASE_URL`, `RABBITMQ_URL`, `PORT`, `SERVICE_NAME` | Banco, broker e identificação |
-| `tickets-service` | `EVENTS_SERVICE_URL` | `http://events-service:8000` |
-| `tickets-service` | `EVENTS_SERVICE_TIMEOUT_MS` | Timeout das chamadas ao Serviço A (padrão: 5000) |
+| `events-tickets-service` | `DATABASE_URL`, `RABBITMQ_URL`, `PORT`, `SERVICE_NAME` | Banco, broker e identificação |
+| `events-tickets-service` | `LOGS_SERVICE_URL` | `http://logs-service:8000` |
+| `events-tickets-service` | `LOGS_SERVICE_TIMEOUT_MS` | Timeout da consulta de histórico (padrão: 3000) |
+| `events-tickets-service` | `OUTBOX_POLL_INTERVAL_MS`, `RABBITMQ_RETRY_DELAY_MS` | Intervalo da outbox (1000) e espera após falha do broker (5000) |
+| `logs-service` | `DATABASE_URL`, `RABBITMQ_URL`, `PORT`, `SERVICE_NAME` | Banco, broker e identificação |
+| `logs-service` | `RABBITMQ_RETRY_SECONDS` | Espera para reconectar ou reprocessar após falha (padrão: 5) |
 
 ## Observabilidade
 
 - `GET /health` e `GET /metrics` (formato Prometheus) nos dois serviços.
-- O Prometheus coleta as métricas a cada 5 s (`observability/prometheus/prometheus.yml`).
+- O Prometheus coleta as métricas a cada 5 s (`observability/prometheus/prometheus.yml`), nos jobs `events-tickets-service` e `logs-service`.
 - O Grafana sobe com fonte de dados e painel provisionados (`observability/grafana/`), e o painel "Visão Geral" é a página inicial.
-- Métricas de requisições e latência nos dois serviços, além de contadores de ingressos emitidos e cancelados no `tickets-service`.
+- Métricas de requisições e latência nos dois serviços; ingressos emitidos e cancelados, operações de vagas e outbox no `events-tickets-service`; mensagens consumidas e registros gravados no `logs-service`.
 - Logs estruturados com método, rota, status e duração em milissegundos.
-- O cabeçalho `X-Correlation-Id` é gerado ou reaproveitado pelo `api-gateway`, repassado aos serviços e impresso nos logs de todos eles (D7).
+- O cabeçalho `X-Correlation-Id` é gerado ou reaproveitado pelo `api-gateway`, repassado aos serviços, gravado em cada mensagem de atividade e impresso nos logs de todos eles (D7).
+- O `logs-service` é domínio, não ferramenta de observabilidade: o item de telemetria do edital é atendido por Prometheus e Grafana (D15).
