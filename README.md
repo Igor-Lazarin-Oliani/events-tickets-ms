@@ -364,4 +364,6 @@ events-tickets-ms/
 | [docs/arquitetura.md](docs/arquitetura.md) | Topologia, configuração e observabilidade |
 | [docs/contratos-api.md](docs/contratos-api.md) | Contratos, regras de negócio e erros |
 | [docs/decisoes.md](docs/decisoes.md) | Decisões de projeto e justificativas |
+| [docs/guia-da-implementacao.md](docs/guia-da-implementacao.md) | Explicação completa da implementação |
+| [docs/roteiro-apresentacao.md](docs/roteiro-apresentacao.md) | Roteiro da apresentação |
 | [docs/AGENTS.md](docs/AGENTS.md) | Regras para agentes de código |

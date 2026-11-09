@@ -10,6 +10,7 @@
 | topologia, variáveis, o que já está implementado | [arquitetura.md](arquitetura.md) |
 | endpoints, regras de negócio, erros | [contratos-api.md](contratos-api.md) (depois da implementação, também o Swagger em `/docs/events` e `/docs/tickets`) |
 | por que algo foi decidido assim | [decisoes.md](decisoes.md) |
+| explicação geral e roteiro da aula | [guia-da-implementacao.md](guia-da-implementacao.md) e [roteiro-apresentacao.md](roteiro-apresentacao.md) |
 
 Se [decisoes.md](decisoes.md) e [prompt.md](prompt.md) divergirem, vale a decisão registrada.
 
