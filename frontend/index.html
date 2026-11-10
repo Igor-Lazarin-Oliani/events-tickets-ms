@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>events-tickets-ms</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='7' width='28' height='18' rx='4' fill='%232f6fed'/%3E%3Ccircle cx='2' cy='16' r='4' fill='white'/%3E%3Ccircle cx='30' cy='16' r='4' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>events-tickets-ms</strong>
+      <span>eventos, ingressos e registro de atividades</span>
+    </div>
+    <nav class="links" aria-label="Ferramentas">
+      <a href="/docs/events-tickets" target="_blank" rel="noopener">Swagger eventos e ingressos</a>
+      <a href="/docs/logs" target="_blank" rel="noopener">Swagger logs</a>
+      <a href="/grafana/" target="_blank" rel="noopener">Grafana</a>
+      <a href="/prometheus/targets" target="_blank" rel="noopener">Prometheus</a>
+      <a href="/rabbitmq/#/queues/%2F/logs.activity" target="_blank" rel="noopener">RabbitMQ</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <!-- Aplicação: tudo o que o usuário faz vira uma chamada HTTP ao api-gateway. -->
+    <section class="pane pane-app" aria-label="Aplicação">
+      <div class="tabs" role="tablist">
+        <button class="tab active" role="tab" data-tab="events" aria-selected="true">Eventos e ingressos</button>
+        <button class="tab" role="tab" data-tab="logs" aria-selected="false">Registro de atividades</button>
+      </div>
+
+      <div class="tab-panel" id="tab-events" role="tabpanel">
+        <div class="toolbar">
+          <button class="btn primary" id="btn-new-event">+ Novo evento</button>
+          <label class="field-inline">
+            <span>Status</span>
+            <select id="filter-event-status">
+              <option value="">Todos</option>
+              <option>PUBLISHED</option>
+              <option>SOLD_OUT</option>
+              <option>CANCELLED</option>
+              <option>FINISHED</option>
+            </select>
+          </label>
+          <button class="btn" id="btn-refresh-events">Atualizar</button>
+        </div>
+        <p class="hint">Clique em um evento para ver os ingressos. Os botões chamam a API pelo gateway, e o painel ao lado mostra o caminho de cada chamada.</p>
+        <div id="event-list" class="event-list"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-logs" role="tabpanel" hidden>
+        <div class="toolbar wrap">
+          <button class="btn primary" id="btn-new-log">+ Registrar ocorrência</button>
+          <label class="field-inline">
+            <span>Entidade</span>
+            <select id="filter-log-entity">
+              <option value="">Todas</option>
+              <option value="event">event</option>
+              <option value="ticket">ticket</option>
+            </select>
+          </label>
+          <label class="field-inline">
+            <span>Nível</span>
+            <select id="filter-log-level">
+              <option value="">Todos</option>
+              <option>INFO</option>
+              <option>WARNING</option>
+              <option>ERROR</option>
+            </select>
+          </label>
+          <label class="field-inline">
+            <span>Triagem</span>
+            <select id="filter-log-status">
+              <option value="">Todas</option>
+              <option>NEW</option>
+              <option>REVIEWED</option>
+              <option>RESOLVED</option>
+            </select>
+          </label>
+          <label class="field-inline check">
+            <input type="checkbox" id="filter-log-archived">
+            <span>Arquivados</span>
+          </label>
+          <button class="btn" id="btn-refresh-logs">Atualizar</button>
+        </div>
+        <div id="log-correlation-filter" class="filter-chip" hidden>
+          <span>correlation_id = <code id="log-correlation-value"></code></span>
+          <button class="btn small ghost" id="btn-clear-correlation" aria-label="Remover filtro">✕</button>
+        </div>
+        <p class="hint">Registros gravados pelo <code>logs-service</code>. Os automáticos chegam do RabbitMQ; o fato é imutável, e só a triagem (<code>status</code> e <code>notes</code>) muda.</p>
+        <div id="log-list" class="log-list"></div>
+      </div>
+    </section>
+
+    <!-- Comunicação: topologia ao vivo, telemetria e rastro de cada operação. -->
+    <section class="pane pane-flow" aria-label="Comunicação entre os componentes">
+      <div class="card topology-card">
+        <div class="card-head">
+          <h2>Comunicação entre os componentes</h2>
+          <ul class="legend" aria-label="Legenda">
+            <li><i class="line http"></i>HTTP síncrono</li>
+            <li><i class="line rest"></i>REST entre serviços</li>
+            <li><i class="line amqp"></i>AMQP assíncrono</li>
+            <li><i class="line sql"></i>SQL</li>
+            <li><i class="line scrape"></i>telemetria</li>
+          </ul>
+        </div>
+        <svg id="topology" role="img" aria-label="Diagrama dos 8 contêineres e do navegador, com o estado de cada um"></svg>
+        <p class="caption">Saúde consultada a cada 2 s pelo gateway. Cada animação acompanha uma chamada real (em câmera lenta; os tempos reais estão no rastro), e a parte assíncrona só aparece quando o registro chega ao <code>logs-service</code>.</p>
+      </div>
+
+      <div class="card kpi-card">
+        <div class="kpis" id="kpis"></div>
+        <p class="caption">Contadores do Prometheus (coleta a cada 5 s; zeram quando o serviço reinicia) e fila lida da API do RabbitMQ.</p>
+      </div>
+
+      <div class="card trace-card">
+        <div class="card-head">
+          <h2>Rastro das operações</h2>
+          <div class="card-actions">
+            <button class="btn small ghost" id="btn-experiments">Experimentos de falha</button>
+            <button class="btn small ghost" id="btn-clear-traces">Limpar</button>
+          </div>
+        </div>
+        <ol id="trace-list" class="trace-list"></ol>
+      </div>
+    </section>
+  </main>
+
+  <!-- Formulário genérico: título, campos e ação são montados pelo app.js. -->
+  <dialog id="dlg-form" class="dialog">
+    <form method="dialog" id="form-body">
+      <h2 id="form-title"></h2>
+      <p id="form-description" class="dialog-description"></p>
+      <div id="form-fields" class="form-grid"></div>
+      <p id="form-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" value="cancel" id="form-cancel">Cancelar</button>
+        <button type="submit" class="btn primary" id="form-submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-confirm" class="dialog narrow">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message" class="dialog-description"></p>
+      <div class="dialog-actions">
+        <button type="submit" class="btn ghost" value="no">Voltar</button>
+        <button type="submit" class="btn danger" value="yes" id="confirm-yes">Confirmar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-history" class="dialog wide">
+    <div class="dialog-head">
+      <h2 id="history-title">Histórico</h2>
+      <button class="btn small ghost" id="history-close" aria-label="Fechar">✕</button>
+    </div>
+    <p id="history-description" class="dialog-description"></p>
+    <ol id="history-list" class="history-list"></ol>
+  </dialog>
+
+  <dialog id="dlg-experiments" class="dialog wide">
+    <div class="dialog-head">
+      <h2>Experimentos de falha</h2>
+      <button class="btn small ghost" id="experiments-close" aria-label="Fechar">✕</button>
+    </div>
+    <p class="dialog-description">Rode os comandos em um terminal, na pasta do projeto, e acompanhe o diagrama e o rastro.</p>
+    <div class="experiments">
+      <section>
+        <h3>1. O logs-service cai, e as vendas continuam</h3>
+        <div class="command"><code>docker compose stop logs-service</code><button class="btn small" data-copy="docker compose stop logs-service">Copiar</button></div>
+        <ul>
+          <li>O <code>logs-service</code> e a ligação com a fila ficam vermelhos.</li>
+          <li>Emita um ingresso: a resposta continua <code>201</code>, e o rastro fica aguardando a entrega.</li>
+          <li>A fila <code>logs.activity</code> acumula as mensagens.</li>
+          <li>O botão Histórico responde <code>503</code>: só essa rota depende do <code>logs-service</code>.</li>
+        </ul>
+        <div class="command"><code>docker compose start logs-service</code><button class="btn small" data-copy="docker compose start logs-service">Copiar</button></div>
+        <ul>
+          <li>A fila esvazia, e o rastro pendente é concluído com o mesmo <code>correlation_id</code>.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>2. O RabbitMQ cai, e nada se perde</h3>
+        <div class="command"><code>docker compose stop rabbitmq</code><button class="btn small" data-copy="docker compose stop rabbitmq">Copiar</button></div>
+        <ul>
+          <li>Emita ou cancele ingressos: tudo funciona, e as mensagens ficam na tabela <code>outbox_messages</code> do <code>events-tickets-db</code>.</li>
+          <li>O nó do <code>events-tickets-service</code> mostra as mensagens pendentes na outbox, lidas do Prometheus.</li>
+        </ul>
+        <div class="command"><code>docker compose start rabbitmq</code><button class="btn small" data-copy="docker compose start rabbitmq">Copiar</button></div>
+        <ul>
+          <li>Em poucos segundos, a outbox publica o que estava pendente e o rastro é concluído.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>3. Uma operação atravessando os contêineres</h3>
+        <p>Cada cartão do rastro tem o botão <strong>grep</strong>, que copia o comando abaixo com o <code>correlation_id</code> da operação. Ele mostra a mesma operação no gateway, no <code>events-tickets-service</code> e no <code>logs-service</code>.</p>
+        <div class="command"><code>docker compose logs api-gateway events-tickets-service logs-service | grep &lt;correlation_id&gt;</code></div>
+      </section>
+    </div>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

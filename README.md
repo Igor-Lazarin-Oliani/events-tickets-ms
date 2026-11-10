@@ -14,7 +14,7 @@ cd events-tickets-ms
 docker compose up --build -d
 ```
 
-Depois, abra o Swagger de [eventos e ingressos](http://localhost:8080/docs/events-tickets) e de [logs](http://localhost:8080/docs/logs), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
+Depois, abra a [aplicação web](http://localhost:8080/), que mostra cada chamada atravessando os componentes, ou o Swagger de [eventos e ingressos](http://localhost:8080/docs/events-tickets) e de [logs](http://localhost:8080/docs/logs), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
 
 ## Requisitos atendidos
 
@@ -25,6 +25,7 @@ Depois, abra o Swagger de [eventos e ingressos](http://localhost:8080/docs/event
 | Conteinerização | Um `Dockerfile` por serviço e `docker-compose.yml` orquestrando os 8 contêineres na rede `events-tickets-network` |
 | API Gateway | NGINX como única porta de entrada, com lista de rotas permitidas |
 | Comunicação entre serviços | JSON via RabbitMQ para gravar cada atividade, e HTTP REST síncrono para consultar o histórico |
+| Aplicação web | Página em `/app/`, servida pelo próprio gateway: CRUD de eventos, ingressos e registros, com o diagrama dos contêineres e o rastro de cada chamada |
 | Documentação interativa | Swagger UI dos dois serviços, acessível pelo gateway |
 | Observabilidade | Prometheus coletando as métricas dos serviços, painéis no Grafana e logs estruturados correlacionados entre gateway e serviços |
 | Mensageria assíncrona (bônus) | RabbitMQ com padrão outbox: toda mudança em eventos e ingressos vira uma mensagem consumida pelo `logs-service` |
@@ -35,7 +36,7 @@ O ambiente tem um API Gateway como única porta de entrada, dois microsserviços
 
 ```mermaid
 flowchart TB
-    cliente["Swagger UI / curl / Postman"]
+    cliente["Navegador: aplicação web (/app/)<br/>Swagger UI / curl"]
     subgraph rede["Rede Docker: events-tickets-network"]
         gateway["api-gateway<br/>NGINX"]
         core["events-tickets-service<br/>NestJS :3000"]
@@ -139,7 +140,7 @@ Todas as rotas públicas são acessadas pelo gateway, em `http://localhost:8080`
 
 ### Documentação e telemetria
 
-Disponíveis pelo gateway, com o ambiente em execução:
+Disponíveis pelo gateway, com o ambiente em execução. A [aplicação web](http://localhost:8080/) (`/app/`) reúne tudo em uma página.
 
 | Recurso | Eventos e ingressos | Logs |
 |---|---|---|
@@ -195,7 +196,23 @@ As credenciais estão no `docker-compose.yml` e são exclusivas do ambiente loca
 
 ## Roteiro de demonstração
 
-O roteiro parte de um ambiente no ar. Pode ser feito pelo Swagger UI ou pelos comandos `curl` mais abaixo.
+O roteiro parte de um ambiente no ar. Pode ser feito pela aplicação web, pelo Swagger UI ou pelos comandos `curl` mais abaixo.
+
+### Pela aplicação web
+
+Abra http://localhost:8080/. À esquerda fica a aplicação; à direita, o diagrama dos 8 contêineres, os contadores do Prometheus e da fila, e o rastro de cada operação. Toda chamada leva um `X-Correlation-Id` com prefixo `ui-`, e a parte assíncrona só é marcada como concluída quando o registro com esse identificador chega ao `logs-service`.
+
+| # | Ação | O que observar |
+|---|---|---|
+| 1 | **+ Novo evento**, com capacidade 5 | Navegador → gateway → `events-tickets-service` → banco; depois, `event.created` chega ao `logs-service` pelo RabbitMQ |
+| 2 | **Inscrever** um participante | `201` e uma transação com vaga, ingresso e outbox; `ticket.issued` e `event.spot_reserved` chegam ao `logs-service` |
+| 3 | **⚡ Concorrência** com 20 inscrições | Só 4 recebem `201`, as outras 16 recebem `409 Event is sold out`, e o evento vai a `SOLD_OUT`: nenhuma vaga vendida além da capacidade |
+| 4 | **Check-in** e **Cancelar** em ingressos | A vaga cancelada volta, e o evento retorna a `PUBLISHED` |
+| 5 | **Histórico** do evento | A linha verde-azulada mostra o `events-tickets-service` consultando o `logs-service` por HTTP REST |
+| 6 | Aba **Registro de atividades** | Triagem (`status` e notas), arquivamento e registro manual de ocorrência |
+| 7 | **Experimentos de falha** | Comandos para derrubar o `logs-service` ou o RabbitMQ e ver as mensagens esperando na fila ou na outbox |
+
+O botão **grep** de cada operação copia o comando que mostra a mesma operação nos logs do gateway e dos dois serviços.
 
 ### Pelo Swagger UI
 
@@ -371,6 +388,7 @@ pytest
 events-tickets-ms/
 ├── README.md
 ├── docker-compose.yml            # Orquestração dos contêineres
+├── frontend/                     # Aplicação web estática, servida pelo gateway em /app/
 ├── gateway/                      # Configuração do API Gateway (NGINX)
 ├── messaging/                    # Configuração do RabbitMQ
 ├── observability/                # Configuração do Prometheus e do Grafana

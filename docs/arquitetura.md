@@ -16,6 +16,7 @@ Visão do que existe e do que está previsto. A especificação completa está e
 | 6 | Prometheus e Grafana | Concluída e validada |
 | 7 | Mensageria com RabbitMQ (bônus) | Concluída e validada |
 | 8 | Reestruturação: `events-tickets-service` (NestJS) + `logs-service` (Python) | Concluída e validada em contêiner |
+| 9 | Aplicação web estática servida pelo `api-gateway` (D24) | Concluída e validada no navegador |
 
 Atualize esta tabela ao concluir cada fase.
 
@@ -23,7 +24,7 @@ Atualize esta tabela ao concluir cada fase.
 
 ```mermaid
 flowchart TB
-    cliente["Swagger UI / curl / Postman"]
+    cliente["Navegador: aplicação web (/app/)<br/>Swagger UI / curl"]
     subgraph rede["Rede Docker: events-tickets-network"]
         gateway["api-gateway<br/>NGINX :80"]
         core["events-tickets-service<br/>NestJS :3000"]
@@ -52,7 +53,7 @@ flowchart TB
 
 | Contêiner | Tecnologia | Porta no host | Porta interna | Responsabilidade |
 |---|---|---|---|---|
-| `api-gateway` | NGINX 1.27 | 8080 | 80 | Entrada única e roteamento |
+| `api-gateway` | NGINX 1.27 | 8080 | 80 | Entrada única, roteamento e arquivos da aplicação web |
 | `events-tickets-service` | Node.js 20, NestJS, TypeORM | Nenhuma | 3000 | Eventos, vagas, inscrições, ingressos e check-in |
 | `events-tickets-db` | PostgreSQL 16 | Nenhuma | 5432 | Dados de `events_tickets_db` |
 | `logs-service` | Python 3.11, FastAPI, SQLAlchemy 2 | Nenhuma | 8000 | Registro de atividades (auditoria) |
@@ -60,6 +61,18 @@ flowchart TB
 | `rabbitmq` | RabbitMQ 3.13 | Nenhuma | 5672, 15672 | Mensageria assíncrona |
 | `prometheus` | Prometheus 2.55 | Nenhuma | 9090 | Coleta e armazenamento de métricas |
 | `grafana` | Grafana 11.4 | Nenhuma | 3000 | Painéis de telemetria |
+
+## Aplicação web
+
+A pasta `frontend/` tem HTML, CSS e módulos JavaScript, sem build e sem dependências externas. O `api-gateway` monta a pasta em `/usr/share/nginx/app` e a serve em `/app/`, na mesma origem da API (D24). A página não tem regra de negócio: só chama as rotas públicas e mostra o que cada componente respondeu.
+
+| Parte | Arquivo | Fonte dos dados |
+|---|---|---|
+| Eventos, ingressos e registros | `js/app.js` | Rotas públicas dos dois serviços |
+| Diagrama e saúde dos contêineres | `js/topology.js`, `js/monitor.js` | `/gateway/health`, `/health/*`, `/rabbitmq/api/queues/%2F/logs.activity`, `/prometheus/api/v1/query` e `/grafana/api/health` |
+| Rastro de cada operação | `js/traces.js` | Resposta HTTP e `GET /logs?correlation_id=...`, até as atividades chegarem ao `logs-service` |
+
+Cada operação envia um `X-Correlation-Id` com prefixo `ui-`. A animação da parte assíncrona só começa quando os registros com esse identificador aparecem no `logs-service`. A latência exibida é a diferença entre `occurred_at` e `created_at` dos registros, medida pelos próprios serviços. O RabbitMQ atualiza as estatísticas das filas a cada 1 s (`collect_statistics_interval` em `messaging/rabbitmq.conf`).
 
 ## Fronteiras entre os serviços
 

@@ -192,6 +192,7 @@ O `events-tickets-service` publica as mensagens pendentes da outbox a cada segun
 events-tickets-ms/
 ├── docker-compose.yml                        # Orquestração dos 8 contêineres
 ├── README.md                                 # Guia de execução e demonstração
+├── frontend/                                 # Aplicação web estática, servida pelo gateway em /app/
 ├── gateway/nginx.conf                        # API Gateway
 ├── messaging/rabbitmq.conf                   # Prefixo da interface do RabbitMQ
 ├── observability/                            # Prometheus e Grafana provisionados
@@ -275,3 +276,11 @@ Objetivo: juntar eventos e ingressos em um único microsserviço e criar o micro
 * **Passo 8.5:** rotas `/history` com cliente HTTP, timeout e `503` (D21).
 * **Passo 8.6:** `docker-compose.yml`, `nginx.conf`, `prometheus.yml` e painel do Grafana com os novos serviços.
 * **Passo 8.7:** testes Jest e `pytest`, validação em contêiner e atualização de toda a documentação.
+
+## 11. Fase 9: Aplicação web
+
+Objetivo: dar ao sistema uma aplicação web que use as rotas públicas e mostre a comunicação entre os componentes, sem novo contêiner (D24).
+
+* **Passo 9.1:** página estática em `frontend/` (HTML, CSS e módulos JavaScript, sem build nem CDN), servida pelo `api-gateway` em `/app/`, com `/` redirecionando para lá.
+* **Passo 9.2:** CRUD de eventos, ingressos e registros de atividade, mais um teste de concorrência que dispara várias inscrições ao mesmo tempo.
+* **Passo 9.3:** diagrama dos 8 contêineres com a saúde de cada um, animação das chamadas e rastro por `X-Correlation-Id`, com a parte assíncrona confirmada pelo `logs-service`.

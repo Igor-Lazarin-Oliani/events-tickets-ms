@@ -171,3 +171,15 @@ Travar o evento antes de cancelar os ingressos fecha a janela de corrida que exi
 **Status:** provisória.
 
 Com a D18, as rotas de eventos passaram do FastAPI para o NestJS, cujo `ValidationPipe` responde `400`. Por coerência, todo o `events-tickets-service` usa `400` para corpo inválido, UUID inválido, data sem fuso e fim antes do início. O `logs-service`, em FastAPI, mantém `422` para dados inválidos.
+
+## D24 — Aplicação web estática servida pelo `api-gateway`
+
+**Status:** confirmada pelo autor.
+
+O edital pede uma "aplicação web", e o Swagger mostra as rotas, mas não a comunicação entre os componentes. A aplicação fica em `frontend/`: HTML, CSS e JavaScript puros, sem framework, build ou CDN. O `api-gateway` serve os arquivos em `/app/`, e `/` redireciona para lá.
+
+- **Sem contêiner novo:** o limite de 8 contêineres continua valendo, e o `docker compose up --build` não ganha etapa de build.
+- **Mesma origem da API:** sem CORS, e a própria página entra pela porta 8080, como qualquer cliente.
+- **Sem regra de negócio:** a página só chama rotas públicas. Vagas, duplicidade e transições continuam decididas pelos serviços, e a página exibe os erros que eles devolvem.
+- **Animação com evidência:** a parte síncrona acompanha a resposta HTTP, e a assíncrona só aparece quando o registro com o `X-Correlation-Id` da operação chega ao `logs-service`. A saúde de cada nó vem de `/health/*`, da API do RabbitMQ e do Prometheus, todos pelo gateway.
+- **Credenciais do RabbitMQ na página:** a API de gerenciamento exige login, e a página envia as credenciais do ambiente local, as mesmas do `docker-compose.yml`. Em produção, isso exigiria autenticação própria.

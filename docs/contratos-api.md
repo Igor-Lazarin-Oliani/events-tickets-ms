@@ -20,6 +20,8 @@ Este documento deve continuar consistente com o Swagger em `/docs/events-tickets
 | `/grafana/` | Painéis do Grafana |
 | `/rabbitmq/` | Interface de gerenciamento do RabbitMQ |
 | `/gateway/health` | Saúde do próprio gateway |
+| `/app/` | Aplicação web: arquivos estáticos de `frontend/`, servidos pelo próprio gateway (D24) |
+| `/` | Redireciona para `/app/` |
 
 As rotas das tabelas abaixo são as de cada serviço.
 

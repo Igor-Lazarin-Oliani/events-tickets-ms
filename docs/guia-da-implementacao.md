@@ -54,6 +54,7 @@ Todos estão na rede interna `events-tickets-network`, onde se encontram pelo no
 ```
 events-tickets-ms/
 ├── docker-compose.yml                Sobe os 8 contêineres
+├── frontend/                         Aplicação web, servida pelo gateway em /app/
 ├── gateway/nginx.conf                Rotas do API Gateway
 ├── messaging/rabbitmq.conf           Prefixo /rabbitmq da interface web
 ├── observability/
@@ -258,12 +259,14 @@ O arquivo `gateway/nginx.conf` funciona como lista de permissões: o que não es
 | `/prometheus/` | Prometheus |
 | `/rabbitmq/` | Interface do RabbitMQ |
 | `/gateway/health` | Saúde do gateway |
+| `/app/` (e `/`, que redireciona) | Aplicação web, servida pelo próprio gateway |
 
 Detalhes úteis:
 
 - **DNS em tempo de requisição:** os destinos ficam em variáveis, e o NGINX usa o DNS do Docker. Por isso, um serviço reiniciado com outro IP volta a ser encontrado.
 - **Serviço fora do ar:** o gateway responde `503 Service unavailable`.
 - **Swagger (D14):** cada serviço serve o Swagger no caminho público, para os dois não colidirem e o "Try it out" funcionar pelo gateway.
+- **Aplicação web (D24):** arquivos estáticos de `frontend/`, sem build. Como estão na mesma origem da API, não há CORS, e a página entra pela porta 8080 como qualquer outro cliente. Ela não tem regra de negócio: chama as rotas públicas e desenha o caminho de cada chamada. A parte síncrona acompanha a resposta HTTP. A assíncrona só aparece quando o registro com o mesmo `X-Correlation-Id` chega ao `logs-service`. A saúde de cada contêiner vem de `/health/*`, da API do RabbitMQ e do Prometheus.
 
 ## 10. Observabilidade
 

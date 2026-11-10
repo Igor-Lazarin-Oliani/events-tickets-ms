@@ -21,7 +21,7 @@ O build começa logo no início e roda enquanto você apresenta a teoria. Assim,
 
 - [ ] Ensaiar o roteiro inteiro com cronômetro, pelo menos uma vez, já com a versão nova.
 - [ ] Testar um "Try it out" em cada Swagger.
-- [ ] Perguntar ao professor se o Swagger basta como cliente da "aplicação web".
+- [ ] Testar a aplicação web (http://localhost:8080/) no projetor: o diagrama e o rastro precisam caber na tela. Se não couberem, reduza o zoom do navegador para 90%.
 - [ ] Definir a máquina e testar a internet da sala. Se for ruim, levar o celular para roteador.
 - [ ] Gravar um vídeo de uma execução bem-sucedida, como plano B.
 
@@ -88,7 +88,7 @@ Mostre o diagrama do `README.md`, seção **Arquitetura**, e percorra cada eleme
 
 | Elemento | O que dizer |
 |---|---|
-| **Cliente** | "O cliente usa o Swagger ou qualquer ferramenta HTTP, sempre por uma única porta." |
+| **Cliente** | "O cliente é a aplicação web, servida pelo próprio gateway. O Swagger e o curl também funcionam, sempre pela mesma porta." |
 | **API Gateway** | "O NGINX é a única porta aberta, a 8080. Ele esconde a topologia e usa uma lista de rotas permitidas." |
 | **Microsserviços** | "Dois serviços, em tecnologias diferentes, em camadas: rota, regra de negócio e acesso a dados." |
 | **Bancos** | "Dois PostgreSQL separados, um por serviço. O de logs nunca lê o banco de eventos, e vice-versa." |
@@ -121,11 +121,26 @@ Se ainda estiver subindo, repita o comando e aproveite para abrir as abas do pr�
 
 Abra no navegador:
 
+- http://localhost:8080/ (aplicação web)
 - http://localhost:8080/docs/events-tickets
 - http://localhost:8080/docs/logs
 - http://localhost:8080/grafana/
 - http://localhost:8080/prometheus/targets
 - http://localhost:8080/rabbitmq/ (`events_tickets` / `events_tickets_pass`)
+
+### Alternativa: passos 4, 5 e 8 pela aplicação web
+
+A aplicação web cobre as rotas, a comunicação entre os serviços e a falha do serviço de logs, com o caminho de cada chamada desenhado ao lado. Os blocos de `curl` abaixo continuam valendo como plano B.
+
+| Passo | Na aplicação | O que dizer |
+|---|---|---|
+| Rotas | **+ Novo evento** com capacidade 5, depois **Inscrever** um participante | "A chamada entra pelo gateway, chega ao serviço principal e vira uma transação no banco. Um segundo depois, o registro chega ao serviço de logs pelo RabbitMQ, com o mesmo identificador." |
+| Concorrência | **⚡ Concorrência** com 20 inscrições | "Vinte inscrições ao mesmo tempo para 4 vagas: exatamente 4 passaram, e as outras receberam 409. O UPDATE condicional não deixa vender além da capacidade." |
+| Check-in e cancelamento | **Check-in** em um ingresso e **Cancelar** em outro | "A vaga voltou, e o evento está PUBLISHED de novo." |
+| Comunicação síncrona | **Histórico** do evento | "A linha verde-azulada é o serviço principal consultando o de logs por HTTP REST, porque o usuário espera a resposta." |
+| CRUD de logs | Aba **Registro de atividades**: mude a triagem, adicione notas e arquive | "O fato é imutável; só a triagem muda, e excluir é arquivar." |
+| Falha | Botão **Experimentos de falha**, cenário 1 | "Com o serviço de logs fora, a venda segue: o rastro fica aguardando, a fila acumula, e só o histórico responde 503. Quando ele volta, a fila esvazia, e o rastro é concluído." |
+| Rastreamento | Botão **grep** de uma operação, colado no terminal | "A mesma operação no gateway, no serviço principal e no serviço de logs." |
 
 ### 2. Swagger (1 min)
 
@@ -356,3 +371,9 @@ Pelo `X-Correlation-Id`: o gateway o gera, os serviços o repassam, ele vai na m
 
 **Por que o Grafana abre sem login?**
 Para simplificar a demonstração, em modo somente leitura. Em produção, teria autenticação e não ficaria exposto assim.
+
+**A animação da aplicação web é real ou só ilustrativa?**
+Ela acompanha chamadas reais, só que em câmera lenta. A parte síncrona é desenhada com a resposta HTTP de verdade, e a assíncrona só aparece quando o registro com o mesmo `X-Correlation-Id` chega ao serviço de logs. Os tempos no rastro são os reais, e a latência assíncrona vem das datas gravadas pelos próprios serviços. A saúde de cada contêiner é consultada a cada 2 s pelo gateway.
+
+**Por que a aplicação web não tem contêiner próprio?**
+São só arquivos estáticos, sem regra de negócio. O próprio gateway os serve, na mesma origem da API: não há CORS nem etapa de build, e a página entra pela porta 8080 como qualquer cliente.

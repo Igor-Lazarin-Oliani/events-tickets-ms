@@ -34,6 +34,7 @@ cd microservices/logs-service && pip install -r requirements-dev.txt && pytest  
 
 | Recurso | Endereço |
 |---|---|
+| Aplicação web | http://localhost:8080/ (redireciona para `/app/`) |
 | Swagger de eventos e ingressos | http://localhost:8080/docs/events-tickets |
 | Métricas de eventos e ingressos | http://localhost:8080/metrics/events-tickets |
 | Swagger de logs | http://localhost:8080/docs/logs |
@@ -48,6 +49,7 @@ cd microservices/logs-service && pip install -r requirements-dev.txt && pytest  
 /
 ├── docker-compose.yml · README.md
 ├── docs/                          # toda a documentação, inclusive este arquivo
+├── frontend/                      # aplicação web estática, servida pelo api-gateway em /app/
 ├── gateway/                       # configuração do NGINX
 ├── messaging/                     # configuração do RabbitMQ
 ├── observability/                 # configuração do Prometheus e do Grafana
@@ -87,6 +89,10 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **`depends_on` com `service_healthy` exige `healthcheck`.** A imagem `python:3.11-slim` não tem `curl`; o `logs-service` usa `python -c` com `urllib`.
 - **Dentro da rede Docker, use nome de serviço e porta interna:** `logs-service:8000` e `events-tickets-db:5432`. Só o `api-gateway` publica porta no host (`8080`); para inspecionar um banco, use `docker compose exec`.
 - **Gateway usa lista de rotas permitidas.** Rota nova precisa de `location` em `gateway/nginx.conf`, senão responde `404`.
+- **A aplicação web não tem build nem dependência externa (D24).** `frontend/` é servido como está pelo `api-gateway`; nada de framework, `npm` ou CDN, porque a avaliação pode acontecer sem internet boa.
+- **A aplicação web não decide regra de negócio.** Ela só chama rotas públicas e exibe as respostas; vagas, duplicidade e transições ficam nos serviços.
+- **O `nginx.conf` não carrega `mime.types` no `http`.** O padrão do servidor é `application/json`; o `location /app/` inclui `mime.types` para servir HTML, CSS e JS com o tipo certo.
+- **Textos da API entram na página como texto, nunca como HTML.** Use o `h()` de `frontend/js/util.js`, que cria nós com `textContent`.
 - **`proxy_pass` do gateway usa variável e `resolver` do Docker.** Sem isso, o NGINX guarda o IP antigo quando um serviço reinicia.
 - **`npm ci` no Dockerfile exige `package-lock.json` versionado.**
 - **Rótulo de métrica usa o padrão da rota** (`/tickets/:id`), nunca a URL real, para não explodir a cardinalidade.

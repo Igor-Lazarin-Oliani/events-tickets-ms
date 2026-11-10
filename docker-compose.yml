@@ -8,6 +8,8 @@ services:
       - "8080:80"
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Aplicação web estática, publicada em /app/.
+      - ./frontend:/usr/share/nginx/app:ro
     depends_on:
       events-tickets-service:
         condition: service_healthy
