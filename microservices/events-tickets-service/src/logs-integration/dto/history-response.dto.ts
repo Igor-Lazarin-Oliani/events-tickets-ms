@@ -42,6 +42,22 @@ export class HistoryResponseDto {
   entity_id: string;
 
   @ApiProperty({
+    description:
+      'Total de atividades da entidade no logs-service, sem os arquivados. Se offset + entries.length for ' +
+      'menor que total, há mais páginas. É null se o logs-service não informar o total.',
+    type: 'integer',
+    nullable: true,
+    example: 3,
+  })
+  total: number | null;
+
+  @ApiProperty({ description: 'Tamanho da página pedida.', example: 500 })
+  limit: number;
+
+  @ApiProperty({ description: 'Quantas atividades foram puladas.', example: 0 })
+  offset: number;
+
+  @ApiProperty({
     description: 'Registros do logs-service em ordem cronológica, sem os arquivados.',
     type: [ActivityLogEntryDto],
   })

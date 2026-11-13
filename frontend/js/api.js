@@ -20,7 +20,8 @@ const REASONS = {
 
 /**
  * Faz a chamada e devolve sempre um resultado, nunca lança exceção:
- * { ok, status, reason, data, ms, correlationId, reachedService, networkError }.
+ * { ok, status, reason, data, total, ms, correlationId, reachedService, networkError }.
+ * total vem do cabeçalho X-Total-Count das listagens paginadas, ou é null.
  */
 export async function request(method, path, { body, correlationId, headers = {}, timeoutMs = 15000 } = {}) {
   const init = { method, headers: { Accept: 'application/json', ...headers }, cache: 'no-store' };
@@ -48,11 +49,13 @@ export async function request(method, path, { body, correlationId, headers = {},
         data = text;
       }
     }
+    const totalHeader = response.headers.get('X-Total-Count');
     return {
       ok: response.ok,
       status: response.status,
       reason: REASONS[response.status] ?? '',
       data,
+      total: totalHeader === null ? null : Number(totalHeader),
       ms,
       correlationId: response.headers.get('X-Correlation-Id') ?? correlationId ?? null,
       reachedService: reachedService(response.status, data),
@@ -64,6 +67,7 @@ export async function request(method, path, { body, correlationId, headers = {},
       status: 0,
       reason: 'sem resposta',
       data: null,
+      total: null,
       ms: performance.now() - startedAt,
       correlationId: correlationId ?? null,
       reachedService: false,

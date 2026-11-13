@@ -115,6 +115,16 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **O `rabbitmq` precisa de `hostname` fixo.** Os dados ficam em pasta com o nome do nó; sem isso, filas e mensagens somem ao recriar o contêiner.
 - **`events_tickets` no lugar de `guest`.** O usuário `guest` só aceita conexões locais do próprio contêiner.
 - **Toda chamada ao `logs-service` tem timeout.** Sem resposta vira `503`, nunca requisição pendurada.
+- **Evento encerrado não aceita inscrição (D25).** A regra fica na consulta prévia (`400 Event has already ended`) e no `UPDATE` condicional da reserva (`"end_at" > now()`), que responde `409` se o evento terminar no meio. Mexeu na reserva? Mantenha as duas.
+- **Datas de exemplo e de teste precisam estar no futuro.** Swagger, README e roteiro usam 2027; as fixtures usam `FUTURE_YEAR` (`testing/fakes.ts`). Uma data fixa que vence quebra a demonstração e os testes.
+- **Listagens são paginadas (D26).** `limit` de 1 a 500 e `offset`, com o total no cabeçalho `X-Total-Count`; o corpo continua sendo uma lista. Para contar, use o `X-Total-Count` (com `limit=1`), nunca o tamanho da lista.
+- **Paginação estável precisa de desempate.** Ordene por `created_at` e `id`, senão itens criados no mesmo instante se repetem ou somem entre páginas.
+- **Histórico paginado.** O `total` vem do `X-Total-Count` do `logs-service`; se o `GET /logs` mudar, mantenha o cabeçalho.
+- **Rede fora da transação na outbox (D28).** Conecte ao broker antes de abrir a transação que trava as mensagens; dentro dela, só o envio do lote e a confirmação.
+- **Lote cheio publica o próximo em seguida.** O `runCycle` devolve `0` de espera quando o lote veio com `BATCH_SIZE` mensagens; não volte a esperar o intervalo com acúmulo.
+- **`outbox_messages_pending` é o acúmulo total**, contado com `COUNT` a cada ciclo, e não o tamanho do lote.
+- **`restart: unless-stopped` em todos os contêineres (D27).** `docker compose stop` mantém parado, como nos experimentos de falha. Contêineres no ar voltam quando o Docker reinicia: encerre com `docker compose down`.
+- **Nada depende do `logs-service` para subir (D27).** Nem o `api-gateway`, nem o `prometheus`. Não acrescente `depends_on` nele.
 - **Nunca logue nem publique `participant_name`, `participant_email` ou `participant_document`:** os logs são exibidos ao vivo, e as mensagens de atividade ficam guardadas no `logs-service`.
 
 <a id="convencoes"></a>

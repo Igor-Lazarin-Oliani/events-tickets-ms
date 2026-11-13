@@ -9,7 +9,7 @@ import { OutboxRepository } from './outbox.repository';
 
 const DEFAULT_RABBITMQ_URL = 'amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F';
 export const EXCHANGE = 'events-tickets.exchange';
-const BATCH_SIZE = 50;
+export const BATCH_SIZE = 50;
 const CONNECT_TIMEOUT_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 5000;
 
@@ -25,8 +25,9 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, reason: string):
 }
 
 /**
- * Publica em segundo plano as mensagens pendentes da outbox. A entrega é "ao menos uma vez":
- * uma falha no meio do lote reenvia o lote inteiro, e o logs-service descarta repetições.
+ * Publica em segundo plano as mensagens pendentes da outbox, em lotes de BATCH_SIZE. A entrega é
+ * "ao menos uma vez": uma falha no meio do lote reenvia o lote inteiro, e o logs-service descarta
+ * repetições.
  */
 @Injectable()
 export class OutboxPublisher implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -58,24 +59,32 @@ export class OutboxPublisher implements OnApplicationBootstrap, OnApplicationShu
     await this.closeConnection();
   }
 
+  /** Publica um lote de até BATCH_SIZE mensagens e devolve quantas foram confirmadas pelo broker. */
   async publishPending(): Promise<number> {
+    // A métrica mostra todo o acúmulo, e não só o lote, inclusive com o broker fora do ar.
+    const pending = await this.outbox.countPending();
+    this.metrics.setOutboxPending(pending);
+    if (pending === 0) {
+      return 0;
+    }
+
+    // Conecta antes de abrir a transação: a espera pela rede não segura uma conexão do banco
+    // nem deixa linhas da outbox travadas.
+    const channel = await this.getChannel();
     const published = await this.dataSource.transaction(async (manager) => {
-      const pending = await this.outbox.lockPending(manager, BATCH_SIZE);
-      this.metrics.setOutboxPending(pending.length);
-      if (pending.length === 0) {
-        return pending;
+      const batch = await this.outbox.lockPending(manager, BATCH_SIZE);
+      if (batch.length === 0) {
+        return batch;
       }
-      await this.publishBatch(pending);
+      await this.publishBatch(channel, batch);
       await this.outbox.markPublished(
         manager,
-        pending.map((message) => message.id),
+        batch.map((message) => message.id),
       );
-      return pending;
+      return batch;
     });
 
-    if (published.length > 0) {
-      this.metrics.setOutboxPending(0);
-    }
+    this.metrics.setOutboxPending(Math.max(0, pending - published.length));
     for (const message of published) {
       this.metrics.recordMessagePublished(message.routing_key);
       runWithCorrelationId(message.payload.correlation_id ?? '-', () =>
@@ -89,8 +98,27 @@ export class OutboxPublisher implements OnApplicationBootstrap, OnApplicationShu
     return published.length;
   }
 
-  private async publishBatch(messages: OutboxMessage[]): Promise<void> {
-    const channel = await this.getChannel();
+  /**
+   * Um ciclo do laço: publica um lote e devolve a espera até o próximo. Lote cheio indica que
+   * ainda há pendentes, e o próximo sai em seguida, sem esperar o intervalo.
+   */
+  async runCycle(): Promise<number> {
+    try {
+      const published = await this.publishPending();
+      return published >= BATCH_SIZE ? 0 : this.pollMs;
+    } catch (error) {
+      // O laço precisa sobreviver a qualquer falha do broker ou do banco.
+      logEvent(
+        'ACTIVITY MESSAGE PUBLISH FAILED',
+        { reason: reasonOf(error), retry_in_ms: this.retryMs },
+        'WARNING',
+      );
+      await this.closeConnection();
+      return this.retryMs;
+    }
+  }
+
+  private async publishBatch(channel: ConfirmChannel, messages: OutboxMessage[]): Promise<void> {
     this.returned.clear();
     for (const message of messages) {
       // "mandatory" faz o broker devolver a mensagem se ainda não houver fila ligada a ela.
@@ -149,20 +177,7 @@ export class OutboxPublisher implements OnApplicationBootstrap, OnApplicationShu
   }
 
   private async tick(): Promise<void> {
-    let nextDelay = this.pollMs;
-    try {
-      await this.publishPending();
-    } catch (error) {
-      // O laço precisa sobreviver a qualquer falha do broker ou do banco.
-      nextDelay = this.retryMs;
-      logEvent(
-        'ACTIVITY MESSAGE PUBLISH FAILED',
-        { reason: reasonOf(error), retry_in_ms: this.retryMs },
-        'WARNING',
-      );
-      await this.closeConnection();
-    }
-    this.schedule(nextDelay);
+    this.schedule(await this.runCycle());
   }
 
   private async closeConnection(): Promise<void> {

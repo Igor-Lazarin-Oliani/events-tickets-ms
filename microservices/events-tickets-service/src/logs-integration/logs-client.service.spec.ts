@@ -15,24 +15,51 @@ describe('LogsClientService.getHistory', () => {
   it('consulta GET /logs em ordem cronológica e repassa o X-Correlation-Id', async () => {
     const { http, client } = setup();
     const entries = [{ id: '1', action: 'ticket.issued' }];
-    http.get.mockReturnValue(of({ status: 200, data: entries }));
+    http.get.mockReturnValue(of({ status: 200, data: entries, headers: { 'x-total-count': '1' } }));
 
     const history = await runWithCorrelationId('demo-123', () =>
       client.getHistory('ticket', TICKET_ID),
     );
 
-    expect(history).toEqual({ entity_type: 'ticket', entity_id: TICKET_ID, entries });
+    expect(history).toEqual({
+      entity_type: 'ticket',
+      entity_id: TICKET_ID,
+      total: 1,
+      limit: 500,
+      offset: 0,
+      entries,
+    });
     expect(http.get).toHaveBeenCalledWith(
       '/logs',
       expect.objectContaining({
-        params: expect.objectContaining({
+        params: {
           entity_type: 'ticket',
           entity_id: TICKET_ID,
           order: 'asc',
-        }),
+          limit: 500,
+          offset: 0,
+        },
         headers: { 'X-Correlation-Id': 'demo-123' },
       }),
     );
+  });
+
+  it('repassa a página pedida e informa o total, para o cliente saber que há mais', async () => {
+    const { http, client } = setup();
+    const entries = Array.from({ length: 2 }, (_, index) => ({ id: String(index) }));
+    http.get.mockReturnValue(of({ status: 200, data: entries, headers: { 'x-total-count': '7' } }));
+
+    const history = await client.getHistory('event', TICKET_ID, { limit: 2, offset: 4 });
+
+    expect(history).toMatchObject({ total: 7, limit: 2, offset: 4 });
+    expect(http.get.mock.calls[0][1].params).toMatchObject({ limit: 2, offset: 4 });
+  });
+
+  it('devolve total null quando o logs-service não informa o cabeçalho', async () => {
+    const { http, client } = setup();
+    http.get.mockReturnValue(of({ status: 200, data: [], headers: {} }));
+
+    await expect(client.getHistory('ticket', TICKET_ID)).resolves.toMatchObject({ total: null });
   });
 
   it('traduz erro HTTP do logs-service para 503', async () => {

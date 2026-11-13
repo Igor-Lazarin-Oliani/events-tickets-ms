@@ -116,17 +116,17 @@ Responsável pelo ciclo de vida dos eventos, pela verdade absoluta sobre as vaga
 * **Tabela `outbox_messages`:** `id` (= `message_id`), `routing_key`, `payload` (JSONB), `created_at`, `published_at` (D20).
 * **Endpoints Obrigatórios (Todos documentados no Swagger):**
   1. `POST /events` — Cria um evento (`available_spots = max_capacity`, status `PUBLISHED`).
-  2. `GET /events` — Lista os eventos (filtros `?category=...&status=...`).
+  2. `GET /events` — Lista os eventos (filtros `?category=...&status=...`), paginada com `limit` e `offset` e com o total em `X-Total-Count` (D26).
   3. `GET /events/{id}` — Busca um evento.
   4. `PUT /events/{id}` — Atualiza só os campos enviados. Mudança de capacidade preserva as vagas ocupadas (D2); `CANCELLED` é final (D17) e cancela os ingressos ativos na mesma transação (D22).
   5. `DELETE /events/{id}` — Remove o evento e cancela os ingressos ativos na mesma transação (D22).
-  6. `GET /events/{id}/history` — Histórico do evento, consultado no `logs-service` (D21).
+  6. `GET /events/{id}/history` — Histórico do evento, consultado no `logs-service` (D21), paginado com `limit` e `offset` (D26).
   7. `POST /tickets` — Realiza a inscrição / emite o ingresso (seção 6).
-  8. `GET /tickets` — Lista os ingressos (filtros `?event_id=...&participant_email=...&status=...`).
+  8. `GET /tickets` — Lista os ingressos (filtros `?event_id=...&participant_email=...&status=...`), paginada com `limit` e `offset` e com o total em `X-Total-Count` (D26).
   9. `GET /tickets/{id}` — Consulta por `id` (UUID) ou `ticket_code`.
   10. `PUT /tickets/{id}` — Atualiza dados do participante, `modality_tier` ou realiza o **Check-in** (`status: "CHECKED_IN"`) (D12).
   11. `DELETE /tickets/{id}` — **Cancela o ingresso** (soft delete, D1) e devolve a vaga na mesma transação.
-  12. `GET /tickets/{id}/history` — Histórico do ingresso, consultado no `logs-service` (D21).
+  12. `GET /tickets/{id}/history` — Histórico do ingresso, consultado no `logs-service` (D21), paginado com `limit` e `offset` (D26).
   13. `GET /health` e `GET /metrics`.
 
 ### 5.2. Microsserviço B: `logs-service` (Registro de Atividades)
@@ -163,9 +163,9 @@ Guarda o registro de tudo o que acontece com eventos e ingressos e permite a tri
 ### Fluxo 1: Emissão de Inscrição/Ingresso (`POST /tickets`)
 
 1. **Cliente** envia `POST /tickets` com `event_id`, dados do participante e `modality_tier`.
-2. **Validação prévia** (mensagens de erro claras): evento inexistente → `404`; `SOLD_OUT` ou sem vagas → `409 Event is sold out` (D11); `CANCELLED` ou `FINISHED` → `400 Event is not open for registrations`; documento já inscrito → `409` (D3).
+2. **Validação prévia** (mensagens de erro claras): evento inexistente → `404`; evento que já terminou (`end_at` no passado) → `400 Event has already ended` (D25); `SOLD_OUT` ou sem vagas → `409 Event is sold out` (D11); `CANCELLED` ou `FINISHED` → `400 Event is not open for registrations`; documento já inscrito → `409` (D3).
 3. **Transação única** no `events_tickets_db`:
-   * Reserva a vaga com `UPDATE` condicional (`status = 'PUBLISHED' AND available_spots > 0`), mudando para `SOLD_OUT` ao zerar. Se nenhuma linha mudar, `409`.
+   * Reserva a vaga com `UPDATE` condicional (`status = 'PUBLISHED' AND available_spots > 0 AND end_at > now()`), mudando para `SOLD_OUT` ao zerar. Se nenhuma linha mudar, `409`.
    * Salva o ingresso `CONFIRMED` com `ticket_code` e `event_snapshot`.
    * Grava `ticket.issued` e `event.spot_reserved` na outbox.
 4. Qualquer falha desfaz tudo, inclusive a reserva. Inscrição simultânea duplicada é barrada pelo índice único (`409`).
@@ -180,11 +180,11 @@ Em uma transação: trava o evento, cancela os ingressos ativos sem devolver vag
 
 ### Fluxo 4: Registro de Atividades (assíncrono)
 
-O `events-tickets-service` publica as mensagens pendentes da outbox a cada segundo em `events-tickets.exchange`, com confirmação do broker. O `logs-service` consome a fila `logs.activity`, grava e confirma (D20).
+O `events-tickets-service` publica as mensagens pendentes da outbox a cada segundo em `events-tickets.exchange`, em lotes de 50 e com confirmação do broker; com acúmulo, os lotes seguintes saem em sequência (D28). O `logs-service` consome a fila `logs.activity`, grava e confirma (D20).
 
 ### Fluxo 5: Histórico (síncrono)
 
-`GET /events/{id}/history` ou `GET /tickets/{id}/history` chamam `GET http://logs-service:8000/logs?entity_type=...&entity_id=...&order=asc`, com timeout de 3 s. Falha → `503 Logs service unavailable`, sem afetar o resto da API (D21).
+`GET /events/{id}/history` ou `GET /tickets/{id}/history` chamam `GET http://logs-service:8000/logs?entity_type=...&entity_id=...&order=asc&limit=...&offset=...`, com timeout de 3 s, e devolvem `total` a partir do `X-Total-Count` (D26). Falha → `503 Logs service unavailable`, sem afetar o resto da API (D21).
 
 ## 7. Estrutura de Diretórios Modularizada Esperada
 
@@ -284,3 +284,12 @@ Objetivo: dar ao sistema uma aplicação web que use as rotas públicas e mostre
 * **Passo 9.1:** página estática em `frontend/` (HTML, CSS e módulos JavaScript, sem build nem CDN), servida pelo `api-gateway` em `/app/`, com `/` redirecionando para lá.
 * **Passo 9.2:** CRUD de eventos, ingressos e registros de atividade, mais um teste de concorrência que dispara várias inscrições ao mesmo tempo.
 * **Passo 9.3:** diagrama dos 8 contêineres com a saúde de cada um, animação das chamadas e rastro por `X-Correlation-Id`, com a parte assíncrona confirmada pelo `logs-service`.
+
+## 12. Fase 10: Desempenho, resiliência e evento encerrado
+
+Objetivo: corrigir os gargalos encontrados na revisão do projeto e impedir inscrições em eventos encerrados (D25 a D28).
+
+* **Passo 10.1:** inscrição recusada em evento inexistente (`404`) ou já encerrado (`400 Event has already ended`), também no `UPDATE` condicional da reserva (D25).
+* **Passo 10.2:** paginação com `limit`, `offset` e `X-Total-Count` em `GET /events`, `GET /tickets` e `GET /logs`, e históricos paginados com `total` (D26).
+* **Passo 10.3:** `restart: unless-stopped` nos 8 contêineres, e `api-gateway` e `prometheus` sem depender do `logs-service` (D27).
+* **Passo 10.4:** publicador da outbox com lotes em sequência, conexão fora da transação e métrica do acúmulo total; reserva e devolução de vaga com `RETURNING` (D28).

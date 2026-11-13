@@ -41,7 +41,7 @@ docker rmi python:3.11-slim node:20-alpine
 docker builder prune -af
 ```
 
-Se algum `docker rmi` ou `docker volume rm` avisar que o item não existe, pode ignorar. Depois, apague qualquer cópia antiga do projeto na pasta que vai usar.
+Se algum `docker rmi` ou `docker volume rm` avisar que o item não existe, pode ignorar. Os contêineres usam `restart: unless-stopped` e voltam sozinhos quando o Docker reinicia: depois de cada ensaio, encerre com `docker compose down`, senão o `docker ps -a` da abertura vai mostrá-los. Depois, apague qualquer cópia antiga do projeto na pasta que vai usar.
 
 ### Na hora
 
@@ -166,7 +166,7 @@ issue() {
 **Criar um evento com 2 vagas:**
 
 ```sh
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2026-11-20T08:00:00-04:00","end_at":"2026-11-20T18:00:00-04:00","max_capacity":2}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2027-03-20T08:00:00-04:00","end_at":"2027-03-20T18:00:00-04:00","max_capacity":2}')
 echo "$EVENT"
 EVENT_ID=$(echo "$EVENT" | extract_id)
 ```
@@ -277,7 +277,7 @@ curl -s "$GATEWAY/logs?action=ticket.issued&limit=1"; echo
 ### Se sobrar tempo: cancelamento de evento
 
 ```sh
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2026-12-05T18:00:00-04:00","end_at":"2026-12-05T23:00:00-04:00","max_capacity":10}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2027-04-10T18:00:00-04:00","end_at":"2027-04-10T23:00:00-04:00","max_capacity":10}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 issue 'Eva Nunes' 'eva@example.com' '2026000005'; echo
 issue 'Fabio Ramos' 'fabio@example.com' '2026000006'; echo
@@ -291,7 +291,7 @@ curl -s "$GATEWAY/tickets?event_id=$EVENT_ID&status=CANCELLED"; echo
 
 ```sh
 docker compose stop rabbitmq
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2026-12-06T07:00:00-04:00","end_at":"2026-12-06T11:00:00-04:00","max_capacity":10}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2027-04-18T07:00:00-04:00","end_at":"2027-04-18T11:00:00-04:00","max_capacity":10}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 docker compose exec events-tickets-db psql -U events_tickets_user -d events_tickets_db -c 'select routing_key from outbox_messages where published_at is null;'
 docker compose up -d --wait rabbitmq
@@ -303,7 +303,7 @@ curl -s "$GATEWAY/events/$EVENT_ID/history"; echo
 
 ## 25:00: Limitações e encerramento (2 min)
 
-> "Por escopo, não implementei autenticação, e o foco foi a arquitetura distribuída. O histórico tem consistência eventual, com cerca de um segundo de atraso. Como evolução, eu colocaria autenticação, paginação em todas as listagens, migrações de banco e múltiplas instâncias atrás do gateway."
+> "Por escopo, não implementei autenticação, e o foco foi a arquitetura distribuída. O histórico tem consistência eventual, com cerca de um segundo de atraso. Como evolução, eu colocaria autenticação, migrações de banco e múltiplas instâncias atrás do gateway."
 
 > "O projeto atende aos itens do edital: dois serviços heterogêneos com CRUD completo, banco por serviço, tudo em contêineres, API Gateway, observabilidade com Prometheus e Grafana e mensageria. O código e o guia de execução estão no repositório público. Obrigado."
 
@@ -341,6 +341,12 @@ Para desacoplar a persistência: cada serviço evolui seu esquema e falha sem af
 
 **O que acontece se duas pessoas tentarem a última vaga?**
 O `UPDATE` condicional só altera a linha se ainda houver vaga. Uma consegue, e a outra recebe `409`. Testei com 30 inscrições simultâneas para 5 vagas: exatamente 5 foram emitidas.
+
+**E se alguém tentar se inscrever num evento que já acabou, ou que não existe?**
+É recusado: evento inexistente responde `404`, e evento com o `end_at` no passado responde `400 Event has already ended`, sem consumir vaga. A regra também está no `UPDATE` da reserva, então nem uma corrida no último segundo passa.
+
+**E se um contêiner cair sozinho?**
+O Docker o reinicia (`restart: unless-stopped`). Enquanto isso, o resto continua: se for o `logs-service`, a venda segue e as atividades esperam na fila; se for o RabbitMQ, elas esperam na outbox.
 
 **E se o serviço cair no meio da emissão?**
 Como reserva, ingresso e mensagem estão na mesma transação, ou tudo foi gravado, ou nada foi. Não há vaga presa.

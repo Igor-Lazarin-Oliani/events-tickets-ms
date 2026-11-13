@@ -68,6 +68,9 @@ class LogService:
     def list_logs(self, filters: LogFilters) -> list[ActivityLog]:
         return self.repository.get_all(filters)
 
+    def count_logs(self, filters: LogFilters) -> int:
+        return self.repository.count(filters)
+
     def get_log(self, log_id: UUID) -> ActivityLog:
         entry = self.repository.get_by_id(log_id)
         if entry is None:

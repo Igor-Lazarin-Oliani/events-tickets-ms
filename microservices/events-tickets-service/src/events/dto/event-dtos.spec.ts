@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateEventDto } from './create-event.dto';
+import { ListEventsQueryDto } from './list-events-query.dto';
 import { UpdateEventDto } from './update-event.dto';
 
 const validCreate = {
@@ -32,6 +33,28 @@ describe('CreateEventDto', () => {
     await expect(
       errorsOf(CreateEventDto, { ...validCreate, max_capacity: 0, modality: 'X', title: '  ' }),
     ).resolves.toEqual(['max_capacity', 'modality', 'title']);
+  });
+});
+
+describe('ListEventsQueryDto', () => {
+  it('converte limit e offset da query string em números', async () => {
+    const query = plainToInstance(ListEventsQueryDto, { limit: '10', offset: '20' });
+
+    await expect(validate(query)).resolves.toEqual([]);
+    expect([query.limit, query.offset]).toEqual([10, 20]);
+  });
+
+  it.each([
+    ['0', 'limit'],
+    ['501', 'limit'],
+    ['abc', 'limit'],
+    ['2.5', 'limit'],
+  ])('recusa limit=%s', async (limit, property) => {
+    await expect(errorsOf(ListEventsQueryDto, { limit })).resolves.toEqual([property]);
+  });
+
+  it('recusa offset negativo', async () => {
+    await expect(errorsOf(ListEventsQueryDto, { offset: '-1' })).resolves.toEqual(['offset']);
   });
 });
 

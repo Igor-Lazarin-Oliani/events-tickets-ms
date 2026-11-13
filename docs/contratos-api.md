@@ -27,18 +27,28 @@ As rotas das tabelas abaixo são as de cada serviço.
 
 ## `events-tickets-service` (porta 3000)
 
-Corpo, filtro ou UUID inválido responde `400` em todas as rotas (D12, D23).
+Corpo, filtro, paginação ou UUID inválido responde `400` em todas as rotas (D12, D23).
+
+### Paginação (D26)
+
+| Rota | `limit` | `offset` | Total |
+|---|---|---|---|
+| `GET /events`, `GET /tickets` | 1 a 500, padrão 100 | ≥ 0, padrão 0 | Cabeçalho `X-Total-Count` |
+| `GET /events/{id}/history`, `GET /tickets/{id}/history` | 1 a 500, padrão 500 | ≥ 0, padrão 0 | Campo `total` da resposta |
+
+- As listas vêm dos mais recentes aos mais antigos (`created_at` decrescente, com o `id` como desempate). O corpo continua sendo uma lista.
+- `X-Total-Count` é o total que atende aos filtros, sem considerar `limit` e `offset`. Há mais páginas se `offset` + itens recebidos for menor que o total.
 
 ### Eventos
 
 | Método e rota | Sucesso | Erros |
 |---|---|---|
 | `POST /events` | `201` | `400` |
-| `GET /events?category=&status=` | `200` | `400` |
+| `GET /events?category=&status=&limit=&offset=` | `200` | `400` |
 | `GET /events/{id}` | `200` | `400`, `404` |
 | `PUT /events/{id}` | `200` | `400`, `404`, `409` |
 | `DELETE /events/{id}` | `204` | `400`, `404` |
-| `GET /events/{id}/history` | `200` | `400`, `404`, `503` |
+| `GET /events/{id}/history?limit=&offset=` | `200` | `400`, `404`, `503` |
 
 #### Regras de eventos
 
@@ -55,16 +65,17 @@ Corpo, filtro ou UUID inválido responde `400` em todas as rotas (D12, D23).
 | Método e rota | Sucesso | Erros |
 |---|---|---|
 | `POST /tickets` | `201` | `400`, `404`, `409`, `500` |
-| `GET /tickets?event_id=&participant_email=&status=` | `200` | `400` |
+| `GET /tickets?event_id=&participant_email=&status=&limit=&offset=` | `200` | `400` |
 | `GET /tickets/{id}` (UUID ou `ticket_code`) | `200` | `404` |
 | `PUT /tickets/{id}` | `200` | `400`, `404`, `409` |
 | `DELETE /tickets/{id}` | `200` | `400`, `404`, `409` |
-| `GET /tickets/{id}/history` (UUID ou `ticket_code`) | `200` | `404`, `503` |
+| `GET /tickets/{id}/history?limit=&offset=` (UUID ou `ticket_code`) | `200` | `400`, `404`, `503` |
 | `GET /health` · `GET /metrics` | `200` | `503` no `/health` sem banco |
 
 #### Regras de ingressos
 
 - `ticket_code` tem o formato `EVT-2026-XXXXXX` (6 caracteres alfanuméricos maiúsculos). Em caso de colisão, gera outro código, dentro de um savepoint da mesma transação.
+- **Evento aberto (D25):** a inscrição exige um evento que existe, está `PUBLISHED`, tem vaga e ainda não terminou (`end_at` no futuro). Vale o fim, e não o início: um evento em andamento aceita inscrições.
 - **Duplicidade (D3):** só um ingresso não cancelado por `(event_id, participant_document)`. Uma nova inscrição é aceita depois do cancelamento.
 - **`PUT` (D5, D12):**
   - Altera somente os campos enviados; campos desconhecidos e `null` respondem `400`.
@@ -89,9 +100,9 @@ sequenceDiagram
     participant S as events-tickets-service
     participant D as events_tickets_db
     C->>S: POST /tickets
-    S->>D: consulta o evento e a duplicidade
+    S->>D: consulta o evento (existe, aberto, não encerrado) e a duplicidade
     S->>D: BEGIN
-    S->>D: UPDATE events (reserva condicional)
+    S->>D: UPDATE events (reserva condicional, com end_at > now()) RETURNING *
     S->>D: INSERT tickets (savepoint por tentativa de código)
     S->>D: INSERT outbox_messages (ticket.issued, event.spot_reserved)
     alt qualquer falha
@@ -105,9 +116,11 @@ sequenceDiagram
 
 | Situação | Resposta |
 |---|---|
-| Evento inexistente | `404 Event not found` |
+| Evento inexistente, inclusive se removido entre a consulta e a reserva | `404 Event not found` |
+| Evento já encerrado (`end_at` no passado), qualquer que seja o status (D25) | `400 Event has already ended` |
 | Status `CANCELLED` ou `FINISHED` | `400 Event is not open for registrations` |
 | Status `SOLD_OUT` ou sem vagas, na consulta ou na reserva (D11) | `409 Event is sold out` |
+| Evento encerrado entre a consulta e a reserva (D25) | `409 Event has already ended` |
 | Evento fechado entre a consulta e a reserva | `409 Event is not open for registrations` |
 | Participante já inscrito, inclusive em inscrições simultâneas | `409 Participant already registered for this event` |
 | Falha inesperada ao salvar | `500 Could not issue ticket`, sem consumir a vaga |
@@ -133,7 +146,7 @@ sequenceDiagram
     C->>S: qualquer escrita (POST, PUT, DELETE)
     S->>S: grava a mudança e as mensagens na mesma transação
     S-->>C: resposta imediata
-    S->>B: publica as pendentes (até 1 s depois), com confirmação
+    S->>B: publica as pendentes (até 1 s depois, em lotes de 50), com confirmação
     B->>L: entrega pela fila logs.activity
     L->>L: grava o registro (descarta message_id repetido)
     L->>B: confirma (ack)
@@ -178,6 +191,7 @@ sequenceDiagram
 - `level` é `WARNING` em `event.cancelled`, `event.deleted` e `ticket.cancelled`, e `INFO` nas demais.
 - `data` nunca contém nome, e-mail ou documento do participante. Em `ticket.updated`, leva só `changed_fields`.
 - Mensagem inválida, ou com routing key diferente de `action`, vai para a DLQ. Falha do banco devolve a mensagem à fila depois de 5 s.
+- O publicador conecta ao broker antes de abrir a transação, lê até 50 mensagens por vez e, se o lote vier cheio, busca o próximo em seguida (D28). Com o broker fora do ar, tenta de novo a cada 5 s.
 
 ### Histórico: `events-tickets-service` → HTTP → `logs-service` (D21)
 
@@ -186,18 +200,18 @@ sequenceDiagram
     participant C as Cliente
     participant S as events-tickets-service
     participant L as logs-service
-    C->>S: GET /tickets/{id}/history
+    C->>S: GET /tickets/{id}/history?limit=&offset=
     S->>S: confirma que o ingresso existe (404 se não)
-    S->>L: GET /logs?entity_type=ticket&entity_id=...&order=asc
+    S->>L: GET /logs?entity_type=ticket&entity_id=...&order=asc&limit=&offset=
     alt logs-service responde
-        L-->>S: registros em ordem cronológica
-        S-->>C: 200 { entity_type, entity_id, entries }
+        L-->>S: registros em ordem cronológica + X-Total-Count
+        S-->>C: 200 { entity_type, entity_id, total, limit, offset, entries }
     else fora do ar ou timeout de 3 s
         S-->>C: 503 Logs service unavailable
     end
 ```
 
-Registros arquivados não aparecem no histórico.
+Registros arquivados não aparecem no histórico. A página padrão tem 500 registros, o máximo do `GET /logs`; se `offset` + `entries.length` for menor que `total`, peça a página seguinte com `offset` (D26). `total` é `null` se o `logs-service` não informar o `X-Total-Count`.
 
 ## `logs-service` (porta 8000)
 
@@ -215,7 +229,7 @@ Dados inválidos e campos não editáveis respondem `422`, padrão do FastAPI.
 ### Regras dos registros (D19)
 
 - **`POST /logs`** cria um registro manual: `action` no formato `<entidade>.<verbo>` (ex.: `incident.reported`), `message` obrigatória, `level` (`INFO`, `WARNING`, `ERROR`; padrão `INFO`), `entity_type` e `entity_id` opcionais (o id exige o tipo), `data`, `correlation_id`, `occurred_at` com fuso (padrão: agora) e `notes`. `source` padrão é `manual`. O registro nasce com `status: NEW` e `message_id: null`.
-- **`GET /logs`** exclui os arquivados, a menos que `include_archived=true`. Ordena por `occurred_at` (`order=desc` por padrão; `asc` é a cronológica). `limit` vai de 1 a 500 (padrão 100), com `offset`.
+- **`GET /logs`** exclui os arquivados, a menos que `include_archived=true`. Ordena por `occurred_at` (`order=desc` por padrão; `asc` é a cronológica). `limit` vai de 1 a 500 (padrão 100), com `offset`, e o cabeçalho `X-Total-Count` traz o total que atende aos filtros (D26).
 - **`GET /logs/{id}`** devolve o registro mesmo arquivado, com `archived_at` preenchido.
 - **`PUT /logs/{id}`** altera só `status` (`NEW`, `REVIEWED`, `RESOLVED`) e `notes` (aceita `null`). Qualquer outro campo, ou `status: null`, responde `422`. Registro arquivado responde `409 Archived log entry cannot be modified`.
 - **`DELETE /logs/{id}`** arquiva: preenche `archived_at` e responde `200` com o registro. Repetir responde `409 Log entry is already archived`.

@@ -14,15 +14,27 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   tab: 'events',
   events: [],
+  eventsTotal: null,
   eventsError: null,
   selectedEventId: null,
   tickets: [],
+  ticketsTotal: null,
   ticketsLoading: false,
   ticketsError: null,
   logs: [],
+  logsTotal: null,
   logsError: null,
   logCorrelation: null,
 };
+
+// As listagens são paginadas pela API; a página mostra a primeira página e avisa se houver mais.
+const PAGE_LIMIT = 100;
+
+/** Aviso de lista cortada, a partir do total informado no cabeçalho X-Total-Count. */
+function moreNote(shown, total, what) {
+  if (total === null || total <= shown) return null;
+  return h('div', { class: 'empty small' }, `Mostrando ${shown} de ${total} ${what}, dos mais recentes aos mais antigos.`);
+}
 
 const CATEGORIES = ['ACADEMIC', 'WORKSHOP', 'CONCERT', 'SPORTS', 'ESPORTS', 'GENERAL'];
 const TIERS = ['STANDARD', 'ESTUDANTE', 'VIP', 'OUVINTE', 'LOTE_1'];
@@ -117,10 +129,13 @@ async function afterWrite() {
 // ---------------------------------------------------------------------------------------------
 
 async function loadEvents({ animate = true } = {}) {
+  const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
   const status = $('#filter-event-status').value;
-  const result = await read(`/events${status ? `?status=${status}` : ''}`, { animate });
+  if (status) params.set('status', status);
+  const result = await read(`/events?${params}`, { animate });
   if (result.ok) {
     state.events = result.data;
+    state.eventsTotal = result.total;
     state.eventsError = null;
     if (state.selectedEventId && !state.events.some((ev) => ev.id === state.selectedEventId)) {
       state.selectedEventId = null;
@@ -141,7 +156,8 @@ function renderEvents() {
     list.replaceChildren(h('div', { class: 'empty' }, 'Nenhum evento. Crie o primeiro em “+ Novo evento”.'));
     return;
   }
-  list.replaceChildren(...state.events.map(eventCard));
+  const more = moreNote(state.events.length, state.eventsTotal, 'eventos');
+  list.replaceChildren(...state.events.map(eventCard), ...(more ? [more] : []));
 }
 
 function eventCard(ev) {
@@ -314,9 +330,13 @@ function openEditEvent(ev) {
   });
 }
 
+/** Ingressos ativos do evento, pelo X-Total-Count: não depende de todos caberem em uma página. */
 async function activeTicketCount(eventId) {
-  const result = await api.request('GET', `/tickets?event_id=${eventId}`);
-  return result.ok ? result.data.filter((t) => t.status !== 'CANCELLED').length : null;
+  const totals = await Promise.all(['CONFIRMED', 'CHECKED_IN'].map(async (status) => {
+    const result = await api.request('GET', `/tickets?event_id=${eventId}&status=${status}&limit=1`);
+    return result.ok ? result.total : null;
+  }));
+  return totals.some((total) => total === null) ? null : totals[0] + totals[1];
 }
 
 async function cancelEvent(ev) {
@@ -368,11 +388,12 @@ async function deleteEvent(ev) {
 async function loadTickets({ animate = true } = {}) {
   const eventId = state.selectedEventId;
   if (!eventId) return;
-  const result = await read(`/tickets?event_id=${eventId}`, { animate });
+  const result = await read(`/tickets?event_id=${eventId}&limit=${PAGE_LIMIT}`, { animate });
   if (eventId !== state.selectedEventId) return;
   state.ticketsLoading = false;
   if (result.ok) {
     state.tickets = result.data;
+    state.ticketsTotal = result.total;
     state.ticketsError = null;
   } else {
     state.ticketsError = api.errorMessage(result);
@@ -385,7 +406,8 @@ function ticketsSection(ev) {
     if (state.ticketsLoading) return h('div', { class: 'empty small' }, 'Carregando ingressos…');
     if (state.ticketsError) return errorBox(`Não foi possível listar os ingressos: ${state.ticketsError}`, () => loadTickets());
     if (!state.tickets.length) return h('div', { class: 'empty small' }, 'Nenhum ingresso ainda. Use “Inscrever”.');
-    return h('div', { class: 'ticket-list' }, state.tickets.map(ticketRow));
+    return h('div', { class: 'ticket-list' }, state.tickets.map(ticketRow),
+      moreNote(state.tickets.length, state.ticketsTotal, 'ingressos'));
   })();
   return h('div', { class: 'tickets', onclick: (e) => e.stopPropagation() },
     h('div', { class: 'tickets-head' },
@@ -605,13 +627,13 @@ async function showHistory(kind, id, label) {
   const restQuery = `GET /logs?entity_type=${kind}&entity_id=${shortId(id)}`;
 
   if (result.ok) {
-    const entries = result.data.entries;
+    const { entries, total } = result.data;
     trace.step('http', { detail: line, state: 'ok', at });
     trace.step('rest', { label: restLabel, detail: `${restQuery} → ${entries.length} registro(s)`, state: 'ok', at });
     trace.finish('ok');
     // O histórico abre depois da animação, para o caminho REST entre os serviços ficar visível.
     await Promise.race([animation, sleep(6000)]);
-    openHistory(kind, label, entries);
+    openHistory(kind, label, entries, total ?? null);
     return;
   }
   if (!result.reachedService || result.networkError) {
@@ -636,10 +658,14 @@ async function showHistory(kind, id, label) {
   }
 }
 
-function openHistory(kind, label, entries) {
+function openHistory(kind, label, entries, total) {
   $('#history-title').textContent = `Histórico: ${label}`;
+  // O histórico é paginado; a página mostra a primeira e avisa quando há mais.
+  const count = total !== null && total > entries.length
+    ? `Os ${entries.length} primeiros de ${total} registros`
+    : `${entries.length} registro(s)`;
   $('#history-description').textContent =
-    `Montado pelo events-tickets-service, que consultou o logs-service por HTTP. ${entries.length} registro(s) em ordem cronológica.`;
+    `Montado pelo events-tickets-service, que consultou o logs-service por HTTP. ${count} em ordem cronológica.`;
   const list = $('#history-list');
   list.replaceChildren(...(entries.length
     ? entries.map((entry) => h('li', { class: `history-item level-${entry.level}` },
@@ -668,7 +694,7 @@ function compactData(data) {
 // ---------------------------------------------------------------------------------------------
 
 async function loadLogs({ animate = true } = {}) {
-  const params = new URLSearchParams({ limit: '100', order: 'desc' });
+  const params = new URLSearchParams({ limit: String(PAGE_LIMIT), order: 'desc' });
   const filters = {
     entity_type: $('#filter-log-entity').value,
     level: $('#filter-log-level').value,
@@ -681,6 +707,7 @@ async function loadLogs({ animate = true } = {}) {
   const result = await read(`/logs?${params}`, { animate, route: 'logs' });
   if (result.ok) {
     state.logs = result.data;
+    state.logsTotal = result.total;
     state.logsError = null;
   } else {
     state.logsError = api.errorMessage(result);
@@ -704,7 +731,8 @@ function renderLogs() {
       : 'Nenhum registro com estes filtros.'));
     return;
   }
-  list.replaceChildren(...state.logs.map(logRow));
+  const more = moreNote(state.logs.length, state.logsTotal, 'registros');
+  list.replaceChildren(...state.logs.map(logRow), ...(more ? [more] : []));
 }
 
 function logRow(log) {

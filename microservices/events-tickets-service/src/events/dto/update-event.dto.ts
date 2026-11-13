@@ -52,13 +52,13 @@ export class UpdateEventDto {
   @MaxLength(500)
   location?: string;
 
-  @ApiPropertyOptional({ example: '2026-11-21T08:00:00-04:00' })
+  @ApiPropertyOptional({ example: '2027-03-21T08:00:00-04:00' })
   @IfPresent()
   @IsISO8601({ strict: true })
   @Matches(WITH_TIMEZONE, { message: TIMEZONE_MESSAGE })
   start_at?: string;
 
-  @ApiPropertyOptional({ example: '2026-11-21T18:00:00-04:00' })
+  @ApiPropertyOptional({ example: '2027-03-21T18:00:00-04:00' })
   @IfPresent()
   @IsISO8601({ strict: true })
   @Matches(WITH_TIMEZONE, { message: TIMEZONE_MESSAGE })

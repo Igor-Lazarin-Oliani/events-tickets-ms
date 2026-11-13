@@ -6,6 +6,7 @@ import {
   fakeDataSource,
   fakeLogsClient,
   fakeOutbox,
+  FUTURE_YEAR,
   metricsWithSpies,
 } from '../testing/fakes';
 import { EventModality, EventStatus } from './entities/event.entity';
@@ -87,6 +88,29 @@ describe('EventsService.create', () => {
   });
 });
 
+describe('EventsService.findAll', () => {
+  it('aplica a página padrão e repassa só os filtros', async () => {
+    const { service, events } = setup();
+    events.findAll.mockResolvedValue({ items: [], total: 0 });
+
+    await service.findAll({ category: 'ACADEMIC' });
+
+    expect(events.findAll).toHaveBeenCalledWith(
+      { category: 'ACADEMIC', status: undefined },
+      { limit: 100, offset: 0 },
+    );
+  });
+
+  it('devolve a página e o total do repositório', async () => {
+    const { service, events } = setup();
+    const page = { items: [buildEvent()], total: 7 };
+    events.findAll.mockResolvedValue(page);
+
+    await expect(service.findAll({ limit: 1, offset: 3 })).resolves.toBe(page);
+    expect(events.findAll).toHaveBeenCalledWith(expect.anything(), { limit: 1, offset: 3 });
+  });
+});
+
 describe('EventsService.update', () => {
   it('preserva as vagas ocupadas ao aumentar a capacidade (D2)', async () => {
     const { service } = setup(buildEvent({ max_capacity: 100, available_spots: 50 }));
@@ -142,7 +166,7 @@ describe('EventsService.update', () => {
     const { service } = setup();
 
     await expect(
-      service.update(EVENT_ID, { end_at: '2026-11-19T08:00:00-04:00' }),
+      service.update(EVENT_ID, { end_at: `${FUTURE_YEAR}-11-19T08:00:00-04:00` }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -247,7 +271,21 @@ describe('EventsService.getHistory', () => {
 
     await service.getHistory(EVENT_ID);
 
-    expect(logsClient.getHistory).toHaveBeenCalledWith('event', EVENT_ID);
+    expect(logsClient.getHistory).toHaveBeenCalledWith('event', EVENT_ID, {
+      limit: 500,
+      offset: 0,
+    });
+  });
+
+  it('repassa a paginação pedida, para eventos com mais atividades que uma página', async () => {
+    const { service, logsClient } = setup();
+
+    await service.getHistory(EVENT_ID, { limit: 500, offset: 500 });
+
+    expect(logsClient.getHistory).toHaveBeenCalledWith('event', EVENT_ID, {
+      limit: 500,
+      offset: 500,
+    });
   });
 
   it('responde 404 sem consultar o logs-service', async () => {

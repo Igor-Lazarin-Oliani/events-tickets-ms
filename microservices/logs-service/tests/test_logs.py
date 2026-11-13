@@ -94,6 +94,26 @@ def test_list_paginates(client, create_log):
     assert page[0]["occurred_at"].startswith("2026-11-20T02:00:00")
 
 
+def test_list_reports_total_count_ignoring_pagination(client, create_log):
+    for hour in range(3):
+        create_log(occurred_at=f"2026-11-20T0{hour}:00:00Z")
+    create_log(entity_type="ticket", entity_id=TICKET_ID, action="note.added")
+
+    response = client.get("/logs", params={"entity_type": "event", "limit": 1, "offset": 1})
+
+    assert len(response.json()) == 1
+    assert response.headers["X-Total-Count"] == "3"
+
+
+def test_list_total_count_excludes_archived_unless_requested(client, create_log):
+    archived = create_log()
+    create_log()
+    client.delete(f"/logs/{archived['id']}")
+
+    assert client.get("/logs").headers["X-Total-Count"] == "1"
+    assert client.get("/logs", params={"include_archived": "true"}).headers["X-Total-Count"] == "2"
+
+
 def test_update_changes_only_triage_fields(client, create_log):
     log = create_log()
 

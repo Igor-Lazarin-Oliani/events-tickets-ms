@@ -3,9 +3,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
 import { randomInt } from 'node:crypto';
 import { EntityManager, FindOptionsWhere, Not, Repository } from 'typeorm';
+import { Page, PageRequest } from '../common/pagination';
 import { uniqueViolationConstraint } from '../common/postgres-errors';
-import { ListTicketsQueryDto } from './dto/list-tickets-query.dto';
 import { ACTIVE_PARTICIPANT_INDEX, Ticket, TicketStatus } from './entities/ticket.entity';
+
+export interface TicketFilters {
+  event_id?: string;
+  participant_email?: string;
+  status?: TicketStatus;
+}
 
 const TICKET_CODE_PREFIX = 'EVT-2026-';
 const TICKET_CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -28,12 +34,20 @@ export function generateTicketCode(): string {
 export class TicketsRepository {
   constructor(@InjectRepository(Ticket) private readonly tickets: Repository<Ticket>) {}
 
-  findAll(query: ListTicketsQueryDto): Promise<Ticket[]> {
+  /** Página de ingressos, dos mais recentes aos mais antigos, com o total que atende aos filtros. */
+  async findAll(filters: TicketFilters, page: PageRequest): Promise<Page<Ticket>> {
     const where: FindOptionsWhere<Ticket> = {};
-    if (query.event_id) where.event_id = query.event_id;
-    if (query.participant_email) where.participant_email = query.participant_email;
-    if (query.status) where.status = query.status;
-    return this.tickets.find({ where, order: { created_at: 'DESC' } });
+    if (filters.event_id) where.event_id = filters.event_id;
+    if (filters.participant_email) where.participant_email = filters.participant_email;
+    if (filters.status) where.status = filters.status;
+    const [items, total] = await this.tickets.findAndCount({
+      where,
+      // O id desempata inscrições simultâneas, para as páginas não repetirem itens.
+      order: { created_at: 'DESC', id: 'DESC' },
+      take: page.limit,
+      skip: page.offset,
+    });
+    return { items, total };
   }
 
   /** Aceita o UUID ou o ticket_code. */

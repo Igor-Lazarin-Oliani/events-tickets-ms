@@ -1,11 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { EntityManager, In } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { Activity, buildActivityMessage } from './activity';
 import { OutboxMessage } from './entities/outbox-message.entity';
 
 /** Único ponto de acesso à tabela outbox_messages. */
 @Injectable()
 export class OutboxRepository {
+  constructor(
+    @InjectRepository(OutboxMessage) private readonly messages: Repository<OutboxMessage>,
+  ) {}
+
   /** Grava as mensagens na transação recebida: só serão publicadas se a mudança for confirmada. */
   async enqueue(manager: EntityManager, activities: Activity[]): Promise<OutboxMessage[]> {
     if (activities.length === 0) {
@@ -22,6 +27,11 @@ export class OutboxRepository {
       });
     });
     return repository.save(messages);
+  }
+
+  /** Total aguardando publicação; usa o índice de published_at. */
+  countPending(): Promise<number> {
+    return this.messages.count({ where: { published_at: IsNull() } });
   }
 
   /** Lote de pendentes travado até o commit; outra instância pularia as linhas travadas. */
