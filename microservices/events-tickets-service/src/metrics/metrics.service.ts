@@ -51,7 +51,7 @@ export class MetricsService {
 
   private readonly outboxPending = new Gauge({
     name: 'outbox_messages_pending',
-    help: 'Mensagens aguardando publicação no lote atual da outbox.',
+    help: 'Total de mensagens da outbox aguardando publicação no RabbitMQ.',
     registers: [this.registry],
   });
 

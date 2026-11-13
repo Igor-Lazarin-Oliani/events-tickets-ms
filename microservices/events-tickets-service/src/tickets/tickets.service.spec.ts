@@ -10,6 +10,7 @@ import {
   buildEvent,
   enqueuedActivities,
   EVENT_ID,
+  EVENT_START,
   fakeDataSource,
   fakeLogsClient,
   fakeOutbox,
@@ -88,7 +89,7 @@ describe('TicketsService.create', () => {
       category: 'WORKSHOP',
       modality: 'ONLINE',
       location: 'https://example.com/live',
-      start_at: '2026-11-20T12:00:00.000Z',
+      start_at: EVENT_START.toISOString(),
     });
     expect(issued).toHaveBeenCalledTimes(1);
   });
@@ -116,6 +117,66 @@ describe('TicketsService.create', () => {
 
     await expect(service.create(dto)).rejects.toThrow(new NotFoundException('Event not found'));
     expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
+
+  it('responde 400 para evento que já terminou, sem abrir transação (D25)', async () => {
+    const { service, dataSource, events } = setup();
+    events.findById.mockResolvedValue(buildEvent({ end_at: new Date(Date.now() - 60_000) }));
+
+    await expect(service.create(dto)).rejects.toThrow(
+      new BadRequestException('Event has already ended'),
+    );
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(events.reserveSpot).not.toHaveBeenCalled();
+  });
+
+  it('responde 400 para evento encerrado mesmo que esteja SOLD_OUT', async () => {
+    const { service, events } = setup();
+    events.findById.mockResolvedValue(
+      buildEvent({
+        status: EventStatus.SOLD_OUT,
+        available_spots: 0,
+        end_at: new Date(Date.now() - 60_000),
+      }),
+    );
+
+    await expect(service.create(dto)).rejects.toThrow(
+      new BadRequestException('Event has already ended'),
+    );
+  });
+
+  it('aceita inscrição em evento que já começou, mas ainda não terminou', async () => {
+    const { service, events } = setup();
+    events.findById.mockResolvedValue(
+      buildEvent({
+        start_at: new Date(Date.now() - 60 * 60_000),
+        end_at: new Date(Date.now() + 60 * 60_000),
+      }),
+    );
+
+    await expect(service.create(dto)).resolves.toMatchObject({ status: TicketStatus.CONFIRMED });
+  });
+
+  it('responde 409 quando o evento terminou entre a consulta e a reserva', async () => {
+    const { service, tickets, events } = setup();
+    events.reserveSpot.mockResolvedValue(null as never);
+    events.findById
+      .mockResolvedValueOnce(buildEvent())
+      .mockResolvedValueOnce(buildEvent({ end_at: new Date(Date.now() - 1_000) }));
+
+    await expect(service.create(dto)).rejects.toThrow(
+      new ConflictException('Event has already ended'),
+    );
+    expect(tickets.insertWithUniqueCode).not.toHaveBeenCalled();
+  });
+
+  it('responde 404 quando o evento foi removido entre a consulta e a reserva', async () => {
+    const { service, tickets, events } = setup();
+    events.reserveSpot.mockResolvedValue(null as never);
+    events.findById.mockResolvedValueOnce(buildEvent()).mockResolvedValueOnce(null as never);
+
+    await expect(service.create(dto)).rejects.toThrow(new NotFoundException('Event not found'));
+    expect(tickets.insertWithUniqueCode).not.toHaveBeenCalled();
   });
 
   it.each([EventStatus.CANCELLED, EventStatus.FINISHED])('responde 400 para evento %s', async (status) => {
@@ -187,6 +248,32 @@ describe('TicketsService.create', () => {
 
     await expect(service.create(dto)).rejects.toBeInstanceOf(InternalServerErrorException);
     expect(issued).not.toHaveBeenCalled();
+  });
+});
+
+describe('TicketsService.findAll', () => {
+  it('aplica a página padrão e repassa só os filtros', async () => {
+    const { service, tickets } = setup();
+    tickets.findAll.mockResolvedValue({ items: [], total: 0 });
+
+    await service.findAll({ event_id: EVENT_ID });
+
+    expect(tickets.findAll).toHaveBeenCalledWith(
+      { event_id: EVENT_ID, participant_email: undefined, status: undefined },
+      { limit: 100, offset: 0 },
+    );
+  });
+
+  it('respeita limit e offset enviados', async () => {
+    const { service, tickets } = setup();
+    tickets.findAll.mockResolvedValue({ items: [], total: 0 });
+
+    await service.findAll({ status: TicketStatus.CONFIRMED, limit: 10, offset: 20 });
+
+    expect(tickets.findAll).toHaveBeenCalledWith(
+      expect.objectContaining({ status: TicketStatus.CONFIRMED }),
+      { limit: 10, offset: 20 },
+    );
   });
 });
 
@@ -344,7 +431,21 @@ describe('TicketsService.getHistory', () => {
 
     await service.getHistory('EVT-2026-A8F9K2');
 
-    expect(logsClient.getHistory).toHaveBeenCalledWith('ticket', TICKET_ID);
+    expect(logsClient.getHistory).toHaveBeenCalledWith('ticket', TICKET_ID, {
+      limit: 500,
+      offset: 0,
+    });
+  });
+
+  it('repassa a paginação pedida ao logs-service', async () => {
+    const { service, logsClient } = setup();
+
+    await service.getHistory(TICKET_ID, { limit: 20, offset: 40 });
+
+    expect(logsClient.getHistory).toHaveBeenCalledWith('ticket', TICKET_ID, {
+      limit: 20,
+      offset: 40,
+    });
   });
 
   it('responde 404 sem consultar o logs-service quando o ingresso não existe', async () => {

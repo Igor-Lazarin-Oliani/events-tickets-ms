@@ -4,14 +4,17 @@ services:
   api-gateway:
     image: nginx:1.27-alpine
     container_name: api-gateway
+    restart: unless-stopped
     ports:
       - "8080:80"
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Aplicação web estática, publicada em /app/.
+      - ./frontend:/usr/share/nginx/app:ro
+    # Sem depender do logs-service: com ele fora do ar, a venda segue pelo gateway, e só as rotas
+    # dele respondem 503. O NGINX resolve os nomes a cada requisição, então o encontra quando subir.
     depends_on:
       events-tickets-service:
-        condition: service_healthy
-      logs-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/gateway/health"]
@@ -24,6 +27,7 @@ services:
   events-tickets-db:
     image: postgres:16-alpine
     container_name: events-tickets-db
+    restart: unless-stopped
     environment:
       POSTGRES_DB: events_tickets_db
       POSTGRES_USER: events_tickets_user
@@ -42,6 +46,7 @@ services:
   logs-db:
     image: postgres:16-alpine
     container_name: logs-db
+    restart: unless-stopped
     environment:
       POSTGRES_DB: logs_db
       POSTGRES_USER: logs_user
@@ -60,6 +65,7 @@ services:
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     container_name: rabbitmq
+    restart: unless-stopped
     # O RabbitMQ guarda os dados por nome do nó, que depende do hostname.
     hostname: rabbitmq
     environment:
@@ -80,6 +86,7 @@ services:
   events-tickets-service:
     build: ./microservices/events-tickets-service
     container_name: events-tickets-service
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://events_tickets_user:events_tickets_pass@events-tickets-db:5432/events_tickets_db
       RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
@@ -105,6 +112,7 @@ services:
   logs-service:
     build: ./microservices/logs-service
     container_name: logs-service
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg2://logs_user:logs_pass@logs-db:5432/logs_db
       RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
@@ -132,6 +140,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: prometheus
+    restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -140,10 +149,10 @@ services:
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    # Também sem depender do logs-service: a telemetria precisa subir justamente para mostrar um
+    # serviço fora do ar (up = 0).
     depends_on:
       events-tickets-service:
-        condition: service_healthy
-      logs-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/prometheus/-/healthy"]
@@ -156,6 +165,7 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     container_name: grafana
+    restart: unless-stopped
     environment:
       # Serve o Grafana sob /grafana, o caminho público do gateway.
       GF_SERVER_ROOT_URL: http://localhost:8080/grafana/

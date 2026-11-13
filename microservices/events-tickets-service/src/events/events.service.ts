@@ -5,8 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import {
+  DEFAULT_LIST_LIMIT,
+  Page,
+  PaginationQueryDto,
+  pageRequest,
+} from '../common/pagination';
 import { HistoryResponseDto } from '../logs-integration/dto/history-response.dto';
-import { LogsClientService } from '../logs-integration/logs-client.service';
+import { DEFAULT_HISTORY_LIMIT, LogsClientService } from '../logs-integration/logs-client.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { logEvent } from '../metrics/telemetry';
 import { Activity } from '../outbox/activity';
@@ -72,8 +78,9 @@ export class EventsService {
     return event;
   }
 
-  findAll(query: ListEventsQueryDto): Promise<Event[]> {
-    return this.events.findAll(query);
+  findAll(query: ListEventsQueryDto): Promise<Page<Event>> {
+    const { category, status } = query;
+    return this.events.findAll({ category, status }, pageRequest(query, DEFAULT_LIST_LIMIT));
   }
 
   async findOne(id: string): Promise<Event> {
@@ -155,9 +162,9 @@ export class EventsService {
     logEvent('EVENT DELETED', { event_id: id, tickets_cancelled: cancelledTickets.length });
   }
 
-  async getHistory(id: string): Promise<HistoryResponseDto> {
+  async getHistory(id: string, query: PaginationQueryDto = {}): Promise<HistoryResponseDto> {
     await this.findOne(id);
-    return this.logsClient.getHistory('event', id);
+    return this.logsClient.getHistory('event', id, pageRequest(query, DEFAULT_HISTORY_LIMIT));
   }
 
   /** Aplica a atualização parcial com as regras de período, capacidade (D2) e status (D17). */

@@ -71,7 +71,7 @@ Toda a documentação fica em `docs/`, exceto o `README.md`, previsto na raiz pe
 
 ## D11 — Evento esgotado responde `409`, e não `400`
 
-**Status:** provisória. Corrige a ordem das validações da versão original do prompt.
+**Status:** provisória. Corrige a ordem das validações da versão original do prompt. Atualizada pela D25: o fim do evento é verificado antes de tudo.
 
 Um evento esgotado tem status `SOLD_OUT`. Na ordem original, ele cairia na regra `status !== PUBLISHED` e responderia `400`, mas o roteiro da demonstração exige `409 Event is sold out` no terceiro ingresso. Por isso, `SOLD_OUT` é verificado antes; `CANCELLED` e `FINISHED` continuam respondendo `400`.
 
@@ -143,7 +143,7 @@ O arquivamento, em vez da exclusão física, mantém o `message_id` no banco. As
 
 ## D20 — Toda mudança gera um registro de atividade pela outbox
 
-**Status:** provisória (contrato das mensagens). O uso de RabbitMQ e outbox segue a D16.
+**Status:** provisória (contrato das mensagens). O uso de RabbitMQ e outbox segue a D16. O desempenho do publicador foi revisto na D28.
 
 Cada operação que altera eventos ou ingressos grava, na mesma transação, uma ou mais mensagens em `outbox_messages`. O publicador do `events-tickets-service` as envia a cada segundo para a exchange `events-tickets.exchange` (topic), com a ação como routing key: `event.created`, `event.updated`, `event.cancelled`, `event.deleted`, `event.spot_reserved`, `event.spot_released`, `ticket.issued`, `ticket.updated`, `ticket.checked_in` e `ticket.cancelled`. O `logs-service` consome a fila `logs.activity`, ligada a `event.*` e `ticket.*`.
 
@@ -171,3 +171,53 @@ Travar o evento antes de cancelar os ingressos fecha a janela de corrida que exi
 **Status:** provisória.
 
 Com a D18, as rotas de eventos passaram do FastAPI para o NestJS, cujo `ValidationPipe` responde `400`. Por coerência, todo o `events-tickets-service` usa `400` para corpo inválido, UUID inválido, data sem fuso e fim antes do início. O `logs-service`, em FastAPI, mantém `422` para dados inválidos.
+
+## D24 — Aplicação web estática servida pelo `api-gateway`
+
+**Status:** confirmada pelo autor.
+
+O edital pede uma "aplicação web", e o Swagger mostra as rotas, mas não a comunicação entre os componentes. A aplicação fica em `frontend/`: HTML, CSS e JavaScript puros, sem framework, build ou CDN. O `api-gateway` serve os arquivos em `/app/`, e `/` redireciona para lá.
+
+- **Sem contêiner novo:** o limite de 8 contêineres continua valendo, e o `docker compose up --build` não ganha etapa de build.
+- **Mesma origem da API:** sem CORS, e a própria página entra pela porta 8080, como qualquer cliente.
+- **Sem regra de negócio:** a página só chama rotas públicas. Vagas, duplicidade e transições continuam decididas pelos serviços, e a página exibe os erros que eles devolvem.
+- **Animação com evidência:** a parte síncrona acompanha a resposta HTTP, e a assíncrona só aparece quando o registro com o `X-Correlation-Id` da operação chega ao `logs-service`. A saúde de cada nó vem de `/health/*`, da API do RabbitMQ e do Prometheus, todos pelo gateway.
+- **Credenciais do RabbitMQ na página:** a API de gerenciamento exige login, e a página envia as credenciais do ambiente local, as mesmas do `docker-compose.yml`. Em produção, isso exigiria autenticação própria.
+
+## D25 — Evento encerrado não aceita inscrições
+
+**Status:** confirmada pelo autor (regra). O código `400` e as mensagens são provisórios.
+
+Não é possível se inscrever em evento inexistente nem em evento cujo `end_at` já passou, mesmo que ainda haja vagas e o status continue `PUBLISHED`. Antes, só o status `FINISHED`, alterado à mão, fechava um evento que já tinha acontecido.
+
+- Evento inexistente continua respondendo `404 Event not found`, inclusive se for removido entre a consulta e a reserva.
+- Evento encerrado responde `400 Event has already ended`, como os outros eventos fechados (`CANCELLED` e `FINISHED`). Essa verificação vem antes da de `SOLD_OUT` (D11): um evento encerrado e esgotado responde `400`, porque o motivo real é o fim do evento.
+- A regra também está no `UPDATE` condicional da reserva (`"end_at" > now()`), como as demais condições de vaga. Se o evento terminar, ou tiver o `end_at` alterado, entre a consulta e a reserva, a resposta é `409 Event has already ended`, do mesmo jeito que outras corridas respondem `409`.
+- Vale o fim, e não o início: um evento de vários dias aceita inscrições enquanto acontece.
+- Criar ou editar um evento com datas no passado continua permitido, por exemplo para registrar um evento que já aconteceu; ele só não aceita inscrições.
+- Os exemplos do Swagger, do README e do roteiro usam datas de 2027, e as fixtures dos testes usam sempre o ano seguinte ao atual, para não vencerem.
+
+## D26 — Listagens e históricos paginados, com o total
+
+**Status:** provisória. Corrige listagens que devolviam a tabela inteira e o histórico cortado sem aviso.
+
+- `GET /events` e `GET /tickets` aceitam `limit` (1 a 500, padrão 100) e `offset`, com os mesmos limites do `GET /logs`, e ordenam por `created_at` decrescente, com o `id` como desempate, para as páginas não repetirem itens.
+- As três listagens (`/events`, `/tickets` e `/logs`) devolvem o total que atende aos filtros no cabeçalho `X-Total-Count`. O corpo continua sendo uma lista, então quem já consumia as rotas não precisa mudar.
+- `GET /events/{id}/history` e `GET /tickets/{id}/history` aceitam `limit` (1 a 500, padrão 500) e `offset`, repassados ao `logs-service`, e a resposta ganhou `total`, `limit` e `offset`. Antes, o histórico pedia 500 registros em ordem cronológica e perdia os mais recentes, sem aviso, quando havia mais. `total` vem do `X-Total-Count` do `logs-service` e é `null` se ele não vier.
+- A aplicação web pede 100 itens, avisa quando há mais e conta os ingressos ativos pelo `X-Total-Count`, e não pelo tamanho da lista.
+
+## D27 — Reinício automático e subida sem depender do `logs-service`
+
+**Status:** provisória. Reforça a D21: o `logs-service` nunca bloqueia a venda.
+
+- Os 8 contêineres usam `restart: unless-stopped`. Um processo que cai volta sozinho; um `docker compose stop` mantém o contêiner parado, então os experimentos de falha continuam iguais. Contêineres em execução também voltam quando o Docker reinicia, por isso o ambiente deve ser encerrado com `docker compose down`.
+- O `api-gateway` e o `prometheus` dependem só do `events-tickets-service` saudável. Antes, também esperavam o `logs-service`, e uma falha dele na subida deixava o sistema inteiro sem porta de entrada. O NGINX resolve os nomes a cada requisição (D13), então passa a encaminhar para o `logs-service` assim que ele sobe, e o Prometheus o mostra como `DOWN` enquanto isso.
+
+## D28 — Publicador da outbox sem gargalo
+
+**Status:** provisória. Complementa a D20.
+
+- **Lotes em sequência:** o publicador lê até 50 mensagens por vez. Se o lote vier cheio, o próximo sai em seguida, sem esperar o intervalo de 1 s. Antes, a vazão máxima era de 50 mensagens por segundo, e remover um evento com 300 ingressos, ou recuperar o acúmulo depois de uma queda do RabbitMQ, demorava vários segundos.
+- **Conexão fora da transação:** o publicador conecta ao broker antes de abrir a transação que trava as mensagens (`FOR UPDATE SKIP LOCKED`). Com o broker fora do ar, a tentativa de conexão (até 3 s) não segura uma conexão do banco nem linhas travadas. Só o envio do lote e a espera pela confirmação acontecem com a transação aberta, porque a mensagem só pode ser marcada como publicada depois da confirmação.
+- **Métrica do acúmulo:** `outbox_messages_pending` passa a ser um `COUNT` das mensagens com `published_at` nulo, feito a cada ciclo pelo índice da coluna. Antes, mostrava no máximo o tamanho do lote e voltava a 0 depois de cada lote, mesmo com acúmulo.
+- **Reserva e devolução de vaga com `RETURNING`:** o `UPDATE` condicional já devolve a linha atualizada, sem um `SELECT` a mais enquanto o lock da linha do evento está retido. Todas as reservas de um mesmo evento passam por essa linha, então encurtar o tempo do lock aumenta a vazão das vendas concorrentes.

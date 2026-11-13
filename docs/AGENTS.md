@@ -34,6 +34,7 @@ cd microservices/logs-service && pip install -r requirements-dev.txt && pytest  
 
 | Recurso | Endereço |
 |---|---|
+| Aplicação web | http://localhost:8080/ (redireciona para `/app/`) |
 | Swagger de eventos e ingressos | http://localhost:8080/docs/events-tickets |
 | Métricas de eventos e ingressos | http://localhost:8080/metrics/events-tickets |
 | Swagger de logs | http://localhost:8080/docs/logs |
@@ -48,6 +49,7 @@ cd microservices/logs-service && pip install -r requirements-dev.txt && pytest  
 /
 ├── docker-compose.yml · README.md
 ├── docs/                          # toda a documentação, inclusive este arquivo
+├── frontend/                      # aplicação web estática, servida pelo api-gateway em /app/
 ├── gateway/                       # configuração do NGINX
 ├── messaging/                     # configuração do RabbitMQ
 ├── observability/                 # configuração do Prometheus e do Grafana
@@ -87,6 +89,10 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **`depends_on` com `service_healthy` exige `healthcheck`.** A imagem `python:3.11-slim` não tem `curl`; o `logs-service` usa `python -c` com `urllib`.
 - **Dentro da rede Docker, use nome de serviço e porta interna:** `logs-service:8000` e `events-tickets-db:5432`. Só o `api-gateway` publica porta no host (`8080`); para inspecionar um banco, use `docker compose exec`.
 - **Gateway usa lista de rotas permitidas.** Rota nova precisa de `location` em `gateway/nginx.conf`, senão responde `404`.
+- **A aplicação web não tem build nem dependência externa (D24).** `frontend/` é servido como está pelo `api-gateway`; nada de framework, `npm` ou CDN, porque a avaliação pode acontecer sem internet boa.
+- **A aplicação web não decide regra de negócio.** Ela só chama rotas públicas e exibe as respostas; vagas, duplicidade e transições ficam nos serviços.
+- **O `nginx.conf` não carrega `mime.types` no `http`.** O padrão do servidor é `application/json`; o `location /app/` inclui `mime.types` para servir HTML, CSS e JS com o tipo certo.
+- **Textos da API entram na página como texto, nunca como HTML.** Use o `h()` de `frontend/js/util.js`, que cria nós com `textContent`.
 - **`proxy_pass` do gateway usa variável e `resolver` do Docker.** Sem isso, o NGINX guarda o IP antigo quando um serviço reinicia.
 - **`npm ci` no Dockerfile exige `package-lock.json` versionado.**
 - **Rótulo de métrica usa o padrão da rota** (`/tickets/:id`), nunca a URL real, para não explodir a cardinalidade.
@@ -109,6 +115,16 @@ A árvore completa está na [seção 7 do prompt.md](prompt.md#7-estrutura-de-di
 - **O `rabbitmq` precisa de `hostname` fixo.** Os dados ficam em pasta com o nome do nó; sem isso, filas e mensagens somem ao recriar o contêiner.
 - **`events_tickets` no lugar de `guest`.** O usuário `guest` só aceita conexões locais do próprio contêiner.
 - **Toda chamada ao `logs-service` tem timeout.** Sem resposta vira `503`, nunca requisição pendurada.
+- **Evento encerrado não aceita inscrição (D25).** A regra fica na consulta prévia (`400 Event has already ended`) e no `UPDATE` condicional da reserva (`"end_at" > now()`), que responde `409` se o evento terminar no meio. Mexeu na reserva? Mantenha as duas.
+- **Datas de exemplo e de teste precisam estar no futuro.** Swagger, README e roteiro usam 2027; as fixtures usam `FUTURE_YEAR` (`testing/fakes.ts`). Uma data fixa que vence quebra a demonstração e os testes.
+- **Listagens são paginadas (D26).** `limit` de 1 a 500 e `offset`, com o total no cabeçalho `X-Total-Count`; o corpo continua sendo uma lista. Para contar, use o `X-Total-Count` (com `limit=1`), nunca o tamanho da lista.
+- **Paginação estável precisa de desempate.** Ordene por `created_at` e `id`, senão itens criados no mesmo instante se repetem ou somem entre páginas.
+- **Histórico paginado.** O `total` vem do `X-Total-Count` do `logs-service`; se o `GET /logs` mudar, mantenha o cabeçalho.
+- **Rede fora da transação na outbox (D28).** Conecte ao broker antes de abrir a transação que trava as mensagens; dentro dela, só o envio do lote e a confirmação.
+- **Lote cheio publica o próximo em seguida.** O `runCycle` devolve `0` de espera quando o lote veio com `BATCH_SIZE` mensagens; não volte a esperar o intervalo com acúmulo.
+- **`outbox_messages_pending` é o acúmulo total**, contado com `COUNT` a cada ciclo, e não o tamanho do lote.
+- **`restart: unless-stopped` em todos os contêineres (D27).** `docker compose stop` mantém parado, como nos experimentos de falha. Contêineres no ar voltam quando o Docker reinicia: encerre com `docker compose down`.
+- **Nada depende do `logs-service` para subir (D27).** Nem o `api-gateway`, nem o `prometheus`. Não acrescente `depends_on` nele.
 - **Nunca logue nem publique `participant_name`, `participant_email` ou `participant_document`:** os logs são exibidos ao vivo, e as mensagens de atividade ficam guardadas no `logs-service`.
 
 <a id="convencoes"></a>

@@ -21,7 +21,7 @@ O build começa logo no início e roda enquanto você apresenta a teoria. Assim,
 
 - [ ] Ensaiar o roteiro inteiro com cronômetro, pelo menos uma vez, já com a versão nova.
 - [ ] Testar um "Try it out" em cada Swagger.
-- [ ] Perguntar ao professor se o Swagger basta como cliente da "aplicação web".
+- [ ] Testar a aplicação web (http://localhost:8080/) no projetor: o diagrama e o rastro precisam caber na tela. Se não couberem, reduza o zoom do navegador para 90%.
 - [ ] Definir a máquina e testar a internet da sala. Se for ruim, levar o celular para roteador.
 - [ ] Gravar um vídeo de uma execução bem-sucedida, como plano B.
 
@@ -41,7 +41,7 @@ docker rmi python:3.11-slim node:20-alpine
 docker builder prune -af
 ```
 
-Se algum `docker rmi` ou `docker volume rm` avisar que o item não existe, pode ignorar. Depois, apague qualquer cópia antiga do projeto na pasta que vai usar.
+Se algum `docker rmi` ou `docker volume rm` avisar que o item não existe, pode ignorar. Os contêineres usam `restart: unless-stopped` e voltam sozinhos quando o Docker reinicia: depois de cada ensaio, encerre com `docker compose down`, senão o `docker ps -a` da abertura vai mostrá-los. Depois, apague qualquer cópia antiga do projeto na pasta que vai usar.
 
 ### Na hora
 
@@ -88,7 +88,7 @@ Mostre o diagrama do `README.md`, seção **Arquitetura**, e percorra cada eleme
 
 | Elemento | O que dizer |
 |---|---|
-| **Cliente** | "O cliente usa o Swagger ou qualquer ferramenta HTTP, sempre por uma única porta." |
+| **Cliente** | "O cliente é a aplicação web, servida pelo próprio gateway. O Swagger e o curl também funcionam, sempre pela mesma porta." |
 | **API Gateway** | "O NGINX é a única porta aberta, a 8080. Ele esconde a topologia e usa uma lista de rotas permitidas." |
 | **Microsserviços** | "Dois serviços, em tecnologias diferentes, em camadas: rota, regra de negócio e acesso a dados." |
 | **Bancos** | "Dois PostgreSQL separados, um por serviço. O de logs nunca lê o banco de eventos, e vice-versa." |
@@ -121,11 +121,26 @@ Se ainda estiver subindo, repita o comando e aproveite para abrir as abas do pr�
 
 Abra no navegador:
 
+- http://localhost:8080/ (aplicação web)
 - http://localhost:8080/docs/events-tickets
 - http://localhost:8080/docs/logs
 - http://localhost:8080/grafana/
 - http://localhost:8080/prometheus/targets
 - http://localhost:8080/rabbitmq/ (`events_tickets` / `events_tickets_pass`)
+
+### Alternativa: passos 4, 5 e 8 pela aplicação web
+
+A aplicação web cobre as rotas, a comunicação entre os serviços e a falha do serviço de logs, com o caminho de cada chamada desenhado ao lado. Os blocos de `curl` abaixo continuam valendo como plano B.
+
+| Passo | Na aplicação | O que dizer |
+|---|---|---|
+| Rotas | **+ Novo evento** com capacidade 5, depois **Inscrever** um participante | "A chamada entra pelo gateway, chega ao serviço principal e vira uma transação no banco. Um segundo depois, o registro chega ao serviço de logs pelo RabbitMQ, com o mesmo identificador." |
+| Concorrência | **⚡ Concorrência** com 20 inscrições | "Vinte inscrições ao mesmo tempo para 4 vagas: exatamente 4 passaram, e as outras receberam 409. O UPDATE condicional não deixa vender além da capacidade." |
+| Check-in e cancelamento | **Check-in** em um ingresso e **Cancelar** em outro | "A vaga voltou, e o evento está PUBLISHED de novo." |
+| Comunicação síncrona | **Histórico** do evento | "A linha verde-azulada é o serviço principal consultando o de logs por HTTP REST, porque o usuário espera a resposta." |
+| CRUD de logs | Aba **Registro de atividades**: mude a triagem, adicione notas e arquive | "O fato é imutável; só a triagem muda, e excluir é arquivar." |
+| Falha | Botão **Experimentos de falha**, cenário 1 | "Com o serviço de logs fora, a venda segue: o rastro fica aguardando, a fila acumula, e só o histórico responde 503. Quando ele volta, a fila esvazia, e o rastro é concluído." |
+| Rastreamento | Botão **grep** de uma operação, colado no terminal | "A mesma operação no gateway, no serviço principal e no serviço de logs." |
 
 ### 2. Swagger (1 min)
 
@@ -151,7 +166,7 @@ issue() {
 **Criar um evento com 2 vagas:**
 
 ```sh
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2026-11-20T08:00:00-04:00","end_at":"2026-11-20T18:00:00-04:00","max_capacity":2}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2027-03-20T08:00:00-04:00","end_at":"2027-03-20T18:00:00-04:00","max_capacity":2}')
 echo "$EVENT"
 EVENT_ID=$(echo "$EVENT" | extract_id)
 ```
@@ -262,7 +277,7 @@ curl -s "$GATEWAY/logs?action=ticket.issued&limit=1"; echo
 ### Se sobrar tempo: cancelamento de evento
 
 ```sh
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2026-12-05T18:00:00-04:00","end_at":"2026-12-05T23:00:00-04:00","max_capacity":10}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2027-04-10T18:00:00-04:00","end_at":"2027-04-10T23:00:00-04:00","max_capacity":10}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 issue 'Eva Nunes' 'eva@example.com' '2026000005'; echo
 issue 'Fabio Ramos' 'fabio@example.com' '2026000006'; echo
@@ -276,7 +291,7 @@ curl -s "$GATEWAY/tickets?event_id=$EVENT_ID&status=CANCELLED"; echo
 
 ```sh
 docker compose stop rabbitmq
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2026-12-06T07:00:00-04:00","end_at":"2026-12-06T11:00:00-04:00","max_capacity":10}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2027-04-18T07:00:00-04:00","end_at":"2027-04-18T11:00:00-04:00","max_capacity":10}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 docker compose exec events-tickets-db psql -U events_tickets_user -d events_tickets_db -c 'select routing_key from outbox_messages where published_at is null;'
 docker compose up -d --wait rabbitmq
@@ -288,7 +303,7 @@ curl -s "$GATEWAY/events/$EVENT_ID/history"; echo
 
 ## 25:00: Limitações e encerramento (2 min)
 
-> "Por escopo, não implementei autenticação, e o foco foi a arquitetura distribuída. O histórico tem consistência eventual, com cerca de um segundo de atraso. Como evolução, eu colocaria autenticação, paginação em todas as listagens, migrações de banco e múltiplas instâncias atrás do gateway."
+> "Por escopo, não implementei autenticação, e o foco foi a arquitetura distribuída. O histórico tem consistência eventual, com cerca de um segundo de atraso. Como evolução, eu colocaria autenticação, migrações de banco e múltiplas instâncias atrás do gateway."
 
 > "O projeto atende aos itens do edital: dois serviços heterogêneos com CRUD completo, banco por serviço, tudo em contêineres, API Gateway, observabilidade com Prometheus e Grafana e mensageria. O código e o guia de execução estão no repositório público. Obrigado."
 
@@ -327,6 +342,12 @@ Para desacoplar a persistência: cada serviço evolui seu esquema e falha sem af
 **O que acontece se duas pessoas tentarem a última vaga?**
 O `UPDATE` condicional só altera a linha se ainda houver vaga. Uma consegue, e a outra recebe `409`. Testei com 30 inscrições simultâneas para 5 vagas: exatamente 5 foram emitidas.
 
+**E se alguém tentar se inscrever num evento que já acabou, ou que não existe?**
+É recusado: evento inexistente responde `404`, e evento com o `end_at` no passado responde `400 Event has already ended`, sem consumir vaga. A regra também está no `UPDATE` da reserva, então nem uma corrida no último segundo passa.
+
+**E se um contêiner cair sozinho?**
+O Docker o reinicia (`restart: unless-stopped`). Enquanto isso, o resto continua: se for o `logs-service`, a venda segue e as atividades esperam na fila; se for o RabbitMQ, elas esperam na outbox.
+
 **E se o serviço cair no meio da emissão?**
 Como reserva, ingresso e mensagem estão na mesma transação, ou tudo foi gravado, ou nada foi. Não há vaga presa.
 
@@ -356,3 +377,9 @@ Pelo `X-Correlation-Id`: o gateway o gera, os serviços o repassam, ele vai na m
 
 **Por que o Grafana abre sem login?**
 Para simplificar a demonstração, em modo somente leitura. Em produção, teria autenticação e não ficaria exposto assim.
+
+**A animação da aplicação web é real ou só ilustrativa?**
+Ela acompanha chamadas reais, só que em câmera lenta. A parte síncrona é desenhada com a resposta HTTP de verdade, e a assíncrona só aparece quando o registro com o mesmo `X-Correlation-Id` chega ao serviço de logs. Os tempos no rastro são os reais, e a latência assíncrona vem das datas gravadas pelos próprios serviços. A saúde de cada contêiner é consultada a cada 2 s pelo gateway.
+
+**Por que a aplicação web não tem contêiner próprio?**
+São só arquivos estáticos, sem regra de negócio. O próprio gateway os serve, na mesma origem da API: não há CORS nem etapa de build, e a página entra pela porta 8080 como qualquer cliente.

@@ -59,11 +59,11 @@ export class Event {
   @Column({ length: 500 })
   location: string;
 
-  @ApiProperty({ example: '2026-11-20T12:00:00.000Z' })
+  @ApiProperty({ example: '2027-03-20T12:00:00.000Z' })
   @Column({ type: 'timestamptz' })
   start_at: Date;
 
-  @ApiProperty({ example: '2026-11-20T22:00:00.000Z' })
+  @ApiProperty({ example: '2027-03-20T22:00:00.000Z' })
   @Column({ type: 'timestamptz' })
   end_at: Date;
 

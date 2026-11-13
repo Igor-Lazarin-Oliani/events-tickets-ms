@@ -7,12 +7,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
+import {
+  DEFAULT_LIST_LIMIT,
+  Page,
+  PaginationQueryDto,
+  pageRequest,
+} from '../common/pagination';
 import { reasonOf, uniqueViolationConstraint } from '../common/postgres-errors';
 import { Event, EVENT_NOT_FOUND, EventStatus } from '../events/entities/event.entity';
 import { eventActivity } from '../events/event-activities';
 import { EventsRepository } from '../events/events.repository';
 import { HistoryResponseDto } from '../logs-integration/dto/history-response.dto';
-import { LogsClientService } from '../logs-integration/logs-client.service';
+import { DEFAULT_HISTORY_LIMIT, LogsClientService } from '../logs-integration/logs-client.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { logEvent } from '../metrics/telemetry';
 import { Activity } from '../outbox/activity';
@@ -28,6 +34,12 @@ const ALREADY_REGISTERED = 'Participant already registered for this event';
 const CONCURRENT_CHANGE = 'Ticket status changed concurrently';
 const SOLD_OUT = 'Event is sold out';
 const NOT_OPEN = 'Event is not open for registrations';
+const ENDED = 'Event has already ended';
+
+/** Evento cujo fim já passou não aceita inscrições; o UPDATE da reserva repete a regra no banco. */
+function hasEnded(event: Event): boolean {
+  return event.end_at.getTime() <= Date.now();
+}
 
 /** Resultado da devolução de vaga no cancelamento, para métricas e logs depois do commit. */
 type SpotRelease =
@@ -108,8 +120,12 @@ export class TicketsService {
     return ticket;
   }
 
-  findAll(query: ListTicketsQueryDto): Promise<Ticket[]> {
-    return this.tickets.findAll(query);
+  findAll(query: ListTicketsQueryDto): Promise<Page<Ticket>> {
+    const { event_id, participant_email, status } = query;
+    return this.tickets.findAll(
+      { event_id, participant_email, status },
+      pageRequest(query, DEFAULT_LIST_LIMIT),
+    );
   }
 
   async findOne(idOrCode: string): Promise<Ticket> {
@@ -213,12 +229,20 @@ export class TicketsService {
     return this.findOne(ticket.id);
   }
 
-  async getHistory(idOrCode: string): Promise<HistoryResponseDto> {
+  async getHistory(idOrCode: string, query: PaginationQueryDto = {}): Promise<HistoryResponseDto> {
     const ticket = await this.findOne(idOrCode);
-    return this.logsClient.getHistory('ticket', ticket.id);
+    return this.logsClient.getHistory(
+      'ticket',
+      ticket.id,
+      pageRequest(query, DEFAULT_HISTORY_LIMIT),
+    );
   }
 
   private assertEventOpen(event: Event): void {
+    // Encerrado vem primeiro: não importa se ainda há vaga ou qual é o status (D25).
+    if (hasEnded(event)) {
+      throw new BadRequestException(ENDED);
+    }
     // SOLD_OUT é verificado antes do status geral para o cliente receber 409, não 400 (D11).
     if (event.status === EventStatus.SOLD_OUT) {
       throw new ConflictException(SOLD_OUT);
@@ -248,11 +272,20 @@ export class TicketsService {
       return new NotFoundException(EVENT_NOT_FOUND);
     }
     this.metrics.recordSpotOperation('reserve', 'conflict');
+    const ended = hasEnded(current);
     logEvent(
       'EVENT SPOT REJECTED',
-      { event_id: eventId, available_spots: current.available_spots, status: current.status },
+      {
+        event_id: eventId,
+        available_spots: current.available_spots,
+        status: current.status,
+        ended,
+      },
       'WARNING',
     );
+    if (ended) {
+      return new ConflictException(ENDED);
+    }
     return new ConflictException(current.available_spots <= 0 ? SOLD_OUT : NOT_OPEN);
   }
 

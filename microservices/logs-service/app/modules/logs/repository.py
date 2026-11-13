@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from app.modules.logs.models import ActivityLog, LogLevel, LogStatus
@@ -45,8 +45,9 @@ class LogRepository:
         query = select(ActivityLog.id).where(ActivityLog.message_id == message_id)
         return self.db.scalar(query) is not None
 
-    def get_all(self, filters: LogFilters) -> list[ActivityLog]:
-        query = select(ActivityLog)
+    @staticmethod
+    def _conditions(filters: LogFilters) -> list[ColumnElement[bool]]:
+        """Filtros comuns à listagem e à contagem, para as duas sempre concordarem."""
         equality_filters = {
             ActivityLog.entity_type: filters.entity_type,
             ActivityLog.entity_id: filters.entity_id,
@@ -56,11 +57,18 @@ class LogRepository:
             ActivityLog.source: filters.source,
             ActivityLog.correlation_id: filters.correlation_id,
         }
-        for column, value in equality_filters.items():
-            if value is not None:
-                query = query.where(column == value)
+        conditions = [column == value for column, value in equality_filters.items() if value is not None]
         if not filters.include_archived:
-            query = query.where(ActivityLog.archived_at.is_(None))
+            conditions.append(ActivityLog.archived_at.is_(None))
+        return conditions
+
+    def count(self, filters: LogFilters) -> int:
+        """Total que atende aos filtros, sem ordem nem paginação."""
+        query = select(func.count()).select_from(ActivityLog).where(*self._conditions(filters))
+        return self.db.scalar(query) or 0
+
+    def get_all(self, filters: LogFilters) -> list[ActivityLog]:
+        query = select(ActivityLog).where(*self._conditions(filters))
 
         if filters.order == "asc":
             query = query.order_by(ActivityLog.occurred_at.asc(), ActivityLog.created_at.asc())

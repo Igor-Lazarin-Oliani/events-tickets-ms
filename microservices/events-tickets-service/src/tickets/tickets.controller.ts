@@ -1,7 +1,27 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Put,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { ApiErrorDto } from '../common/api-error.dto';
+import {
+  ApiPagination,
+  DEFAULT_LIST_LIMIT,
+  PaginationQueryDto,
+  TOTAL_COUNT_HEADER,
+  TOTAL_COUNT_RESPONSE_HEADER,
+} from '../common/pagination';
 import { HistoryResponseDto } from '../logs-integration/dto/history-response.dto';
+import { DEFAULT_HISTORY_LIMIT } from '../logs-integration/logs-client.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { ListTicketsQueryDto } from './dto/list-tickets-query.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
@@ -19,18 +39,21 @@ export class TicketsController {
   @ApiOperation({
     summary: 'Realiza a inscrição e emite o ingresso',
     description:
-      'Valida o evento, reserva uma vaga e salva o ingresso em uma única transação: se algo falhar, nada é gravado e a vaga não é consumida.',
+      'Valida o evento, reserva uma vaga e salva o ingresso em uma única transação: se algo falhar, nada é gravado e a vaga não é consumida. ' +
+      'Só aceita inscrições em evento existente, PUBLISHED, com vaga e que ainda não terminou (end_at no futuro).',
   })
   @ApiResponse({ status: 201, description: 'Ingresso emitido.', type: Ticket })
   @ApiResponse({
     status: 400,
-    description: 'Dados inválidos ou evento fechado para inscrições.',
+    description:
+      'Dados inválidos, evento já encerrado (Event has already ended) ou evento CANCELLED ou FINISHED.',
     type: ApiErrorDto,
   })
   @ApiResponse({ status: 404, description: 'Evento não encontrado.', type: ApiErrorDto })
   @ApiResponse({
     status: 409,
-    description: 'Evento esgotado ou participante já inscrito.',
+    description:
+      'Evento esgotado, participante já inscrito, ou evento que fechou ou terminou entre a consulta e a reserva.',
     type: ApiErrorDto,
   })
   @ApiResponse({ status: 500, description: 'Falha ao salvar o ingresso.', type: ApiErrorDto })
@@ -41,7 +64,9 @@ export class TicketsController {
   @Get()
   @ApiOperation({
     summary: 'Lista as inscrições e ingressos',
-    description: 'Aceita filtros opcionais por evento, e-mail do participante e status.',
+    description:
+      'Aceita filtros opcionais por evento, e-mail do participante e status. A lista é paginada, dos ingressos ' +
+      'mais recentes aos mais antigos, e o cabeçalho X-Total-Count traz o total que atende aos filtros.',
   })
   @ApiQuery({ name: 'event_id', required: false, description: 'UUID do evento.' })
   @ApiQuery({
@@ -51,10 +76,21 @@ export class TicketsController {
     example: 'maria.silva@example.com',
   })
   @ApiQuery({ name: 'status', required: false, enum: TicketStatus })
-  @ApiResponse({ status: 200, description: 'Ingressos encontrados.', type: [Ticket] })
-  @ApiResponse({ status: 400, description: 'Filtro inválido.', type: ApiErrorDto })
-  findAll(@Query() query: ListTicketsQueryDto): Promise<Ticket[]> {
-    return this.ticketsService.findAll(query);
+  @ApiPagination(DEFAULT_LIST_LIMIT)
+  @ApiResponse({
+    status: 200,
+    description: 'Página de ingressos.',
+    type: [Ticket],
+    headers: TOTAL_COUNT_RESPONSE_HEADER,
+  })
+  @ApiResponse({ status: 400, description: 'Filtro ou paginação inválidos.', type: ApiErrorDto })
+  async findAll(
+    @Query() query: ListTicketsQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<Ticket[]> {
+    const page = await this.ticketsService.findAll(query);
+    response.setHeader(TOTAL_COUNT_HEADER, String(page.total));
+    return page.items;
   }
 
   @Get(':id')
@@ -111,13 +147,19 @@ export class TicketsController {
     summary: 'Histórico do ingresso',
     description:
       'Consulta o logs-service por HTTP e devolve as atividades do ingresso em ordem cronológica. ' +
+      'É paginado: total indica quantas atividades existem, e offset busca as seguintes. ' +
       'Se o logs-service estiver fora do ar, responde 503 e o resto da API segue funcionando.',
   })
   @ApiParam({ name: 'id', description: 'UUID ou ticket_code.', example: 'EVT-2026-A8F9K2' })
+  @ApiPagination(DEFAULT_HISTORY_LIMIT)
   @ApiResponse({ status: 200, description: 'Histórico do ingresso.', type: HistoryResponseDto })
+  @ApiResponse({ status: 400, description: 'Paginação inválida.', type: ApiErrorDto })
   @ApiResponse({ status: 404, description: 'Ingresso não encontrado.', type: ApiErrorDto })
   @ApiResponse({ status: 503, description: 'logs-service indisponível.', type: ApiErrorDto })
-  getHistory(@Param('id') id: string): Promise<HistoryResponseDto> {
-    return this.ticketsService.getHistory(id);
+  getHistory(
+    @Param('id') id: string,
+    @Query() query: PaginationQueryDto,
+  ): Promise<HistoryResponseDto> {
+    return this.ticketsService.getHistory(id, query);
   }
 }

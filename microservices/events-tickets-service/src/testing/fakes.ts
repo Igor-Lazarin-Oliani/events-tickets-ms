@@ -5,6 +5,11 @@ import { Activity } from '../outbox/activity';
 export const EVENT_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
 export const TICKET_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 
+// Sempre no ano seguinte: evento encerrado não aceita inscrições, e os testes não podem vencer.
+export const FUTURE_YEAR = new Date().getUTCFullYear() + 1;
+export const EVENT_START = new Date(`${FUTURE_YEAR}-11-20T12:00:00Z`);
+export const EVENT_END = new Date(`${FUTURE_YEAR}-11-20T22:00:00Z`);
+
 export function buildEvent(overrides: Partial<Event> = {}): Event {
   return Object.assign(new Event(), {
     id: EVENT_ID,
@@ -13,8 +18,8 @@ export function buildEvent(overrides: Partial<Event> = {}): Event {
     category: 'WORKSHOP',
     modality: EventModality.ONLINE,
     location: 'https://example.com/live',
-    start_at: new Date('2026-11-20T12:00:00Z'),
-    end_at: new Date('2026-11-20T22:00:00Z'),
+    start_at: new Date(EVENT_START),
+    end_at: new Date(EVENT_END),
     max_capacity: 2,
     available_spots: 2,
     status: EventStatus.PUBLISHED,
@@ -45,11 +50,15 @@ export function enqueuedActivities(outbox: ReturnType<typeof fakeOutbox>): Activ
 
 export function fakeLogsClient() {
   return {
-    getHistory: jest.fn(async (entityType: string, entityId: string) => ({
-      entity_type: entityType,
-      entity_id: entityId,
-      entries: [],
-    })),
+    getHistory: jest.fn(
+      async (entityType: string, entityId: string, page: { limit: number; offset: number }) => ({
+        entity_type: entityType,
+        entity_id: entityId,
+        total: 0,
+        ...page,
+        entries: [],
+      }),
+    ),
   };
 }
 

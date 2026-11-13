@@ -1,7 +1,7 @@
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -11,6 +11,9 @@ from app.modules.logs.schemas import ErrorResponse, LogCreate, LogResponse, LogU
 from app.modules.logs.service import LogService
 
 router = APIRouter(prefix="/logs", tags=["Logs (Registro de atividades)"])
+
+# Total sem paginação; o events-tickets-service o repassa como "total" no histórico.
+TOTAL_COUNT_HEADER = "X-Total-Count"
 
 LOG_ID = Path(
     description="UUID do registro.",
@@ -56,13 +59,25 @@ def create_log(payload: LogCreate, service: LogService = Depends(get_log_service
     summary="Lista os registros",
     description=(
         "Lista os registros com filtros opcionais. Os arquivados ficam de fora, a menos que "
-        "`include_archived=true`. O `events-tickets-service` usa esta rota para montar o histórico "
-        "de um evento ou ingresso."
+        "`include_archived=true`. A lista é paginada com `limit` e `offset`, e o cabeçalho "
+        "`X-Total-Count` traz o total que atende aos filtros. O `events-tickets-service` usa esta "
+        "rota para montar o histórico de um evento ou ingresso."
     ),
     response_description="Registros encontrados.",
-    responses=INVALID_DATA,
+    responses={
+        200: {
+            "headers": {
+                TOTAL_COUNT_HEADER: {
+                    "description": "Total de registros que atendem aos filtros, sem limit e offset.",
+                    "schema": {"type": "integer"},
+                }
+            }
+        },
+        **INVALID_DATA,
+    },
 )
 def list_logs(
+    response: Response,
     entity_type: Optional[str] = Query(default=None, examples=["ticket"]),
     entity_id: Optional[UUID] = Query(default=None),
     action: Optional[str] = Query(default=None, examples=["ticket.issued"]),
@@ -91,6 +106,7 @@ def list_logs(
         limit=limit,
         offset=offset,
     )
+    response.headers[TOTAL_COUNT_HEADER] = str(service.count_logs(filters))
     return service.list_logs(filters)
 
 

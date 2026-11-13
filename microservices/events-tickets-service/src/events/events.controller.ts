@@ -9,10 +9,20 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { ApiErrorDto } from '../common/api-error.dto';
+import {
+  ApiPagination,
+  DEFAULT_LIST_LIMIT,
+  PaginationQueryDto,
+  TOTAL_COUNT_HEADER,
+  TOTAL_COUNT_RESPONSE_HEADER,
+} from '../common/pagination';
 import { HistoryResponseDto } from '../logs-integration/dto/history-response.dto';
+import { DEFAULT_HISTORY_LIMIT } from '../logs-integration/logs-client.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { ListEventsQueryDto } from './dto/list-events-query.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -45,14 +55,27 @@ export class EventsController {
   @Get()
   @ApiOperation({
     summary: 'Lista os eventos',
-    description: 'Aceita filtros opcionais por categoria e status.',
+    description:
+      'Aceita filtros opcionais por categoria e status. A lista é paginada, dos eventos mais recentes aos ' +
+      'mais antigos, e o cabeçalho X-Total-Count traz o total que atende aos filtros.',
   })
   @ApiQuery({ name: 'category', required: false, example: 'ACADEMIC' })
   @ApiQuery({ name: 'status', required: false, enum: EventStatus })
-  @ApiResponse({ status: 200, description: 'Eventos encontrados.', type: [Event] })
-  @ApiResponse({ status: 400, description: 'Filtro inválido.', type: ApiErrorDto })
-  findAll(@Query() query: ListEventsQueryDto): Promise<Event[]> {
-    return this.eventsService.findAll(query);
+  @ApiPagination(DEFAULT_LIST_LIMIT)
+  @ApiResponse({
+    status: 200,
+    description: 'Página de eventos.',
+    type: [Event],
+    headers: TOTAL_COUNT_RESPONSE_HEADER,
+  })
+  @ApiResponse({ status: 400, description: 'Filtro ou paginação inválidos.', type: ApiErrorDto })
+  async findAll(
+    @Query() query: ListEventsQueryDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<Event[]> {
+    const page = await this.eventsService.findAll(query);
+    response.setHeader(TOTAL_COUNT_HEADER, String(page.total));
+    return page.items;
   }
 
   @Get(':id')
@@ -110,14 +133,19 @@ export class EventsController {
     summary: 'Histórico do evento',
     description:
       'Consulta o logs-service por HTTP e devolve as atividades do evento em ordem cronológica, inclusive as ' +
-      'reservas e devoluções de vagas. Se o logs-service estiver fora do ar, responde 503 e o resto da API segue funcionando.',
+      'reservas e devoluções de vagas. É paginado: total indica quantas atividades existem, e offset busca as ' +
+      'seguintes. Se o logs-service estiver fora do ar, responde 503 e o resto da API segue funcionando.',
   })
   @ApiParam({ name: 'id', description: 'UUID do evento.', example: EVENT_UUID_EXAMPLE })
+  @ApiPagination(DEFAULT_HISTORY_LIMIT)
   @ApiResponse({ status: 200, description: 'Histórico do evento.', type: HistoryResponseDto })
-  @ApiResponse({ status: 400, description: 'UUID inválido.', type: ApiErrorDto })
+  @ApiResponse({ status: 400, description: 'UUID ou paginação inválidos.', type: ApiErrorDto })
   @ApiResponse({ status: 404, description: 'Evento não encontrado.', type: ApiErrorDto })
   @ApiResponse({ status: 503, description: 'logs-service indisponível.', type: ApiErrorDto })
-  getHistory(@Param('id', ParseUUIDPipe) id: string): Promise<HistoryResponseDto> {
-    return this.eventsService.getHistory(id);
+  getHistory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: PaginationQueryDto,
+  ): Promise<HistoryResponseDto> {
+    return this.eventsService.getHistory(id, query);
   }
 }

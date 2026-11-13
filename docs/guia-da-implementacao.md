@@ -54,6 +54,7 @@ Todos estão na rede interna `events-tickets-network`, onde se encontram pelo no
 ```
 events-tickets-ms/
 ├── docker-compose.yml                Sobe os 8 contêineres
+├── frontend/                         Aplicação web, servida pelo gateway em /app/
 ├── gateway/nginx.conf                Rotas do API Gateway
 ├── messaging/rabbitmq.conf           Prefixo /rabbitmq da interface web
 ├── observability/
@@ -129,17 +130,19 @@ Campos: `ticket_code`, `event_id`, `event_snapshot`, `participant_name`, `partic
 
 1. Valida o corpo. Campo desconhecido responde `400`.
 2. Busca o evento. Se não existir, `404`.
-3. Verifica se o evento aceita inscrições. `SOLD_OUT` ou sem vagas responde `409`; `CANCELLED` ou `FINISHED` responde `400`.
+3. Verifica se o evento aceita inscrições. Evento que já terminou (`end_at` no passado) responde `400 Event has already ended` (D25); `SOLD_OUT` ou sem vagas responde `409`; `CANCELLED` ou `FINISHED` responde `400`.
 4. Verifica se o documento já tem ingresso ativo no evento (`409`).
 5. **Abre uma transação** e, dentro dela:
-   - reserva a vaga com o `UPDATE` condicional (se outra pessoa levou a última, `409`);
+   - reserva a vaga com o `UPDATE` condicional, que também exige `end_at > now()` e devolve a linha com `RETURNING` (se outra pessoa levou a última, ou o evento fechou ou terminou nesse meio-tempo, `409`);
    - salva o ingresso como `CONFIRMED`;
    - grava as atividades `ticket.issued` e `event.spot_reserved` na outbox.
 6. Faz o commit. Se qualquer passo falhar, o rollback desfaz tudo, inclusive a vaga.
 
 **Savepoint na geração do código.** No PostgreSQL, um erro dentro da transação a invalida. Se o `ticket_code` colidir, a nova tentativa roda dentro de um *savepoint*: só o `INSERT` é desfeito, e a reserva da vaga continua valendo.
 
-**Por que `SOLD_OUT` é verificado antes (D11)?** Senão, ele cairia na regra "status diferente de `PUBLISHED`" e responderia `400`, mas o correto para evento esgotado é `409`.
+**Por que `SOLD_OUT` é verificado antes (D11)?** Senão, ele cairia na regra "status diferente de `PUBLISHED`" e responderia `400`, mas o correto para evento esgotado é `409`. O fim do evento vem antes de tudo (D25): um evento encerrado e esgotado responde `400`, porque o motivo real é o fim.
+
+**Por que vale o fim, e não o início?** Um simpósio de vários dias aceita inscrições enquanto acontece. Depois do `end_at`, não há mais o que frequentar.
 
 **Duplicidade (D3).** O passo 4 é só para dar uma resposta rápida. Quem garante de verdade é um índice único parcial:
 
@@ -222,7 +225,7 @@ O consumidor conecta em segundo plano, com novas tentativas, então a API HTTP d
 1. Uma operação muda eventos ou ingressos, por exemplo `POST /tickets`.
 2. Na **mesma transação**, as mensagens entram em `outbox_messages`.
 3. A API responde na hora.
-4. A cada segundo, o `OutboxPublisher` busca as pendentes e publica em `events-tickets.exchange`, com a ação como routing key.
+4. A cada segundo, o `OutboxPublisher` conta as pendentes, conecta ao broker e só então abre a transação que trava um lote de até 50 (`FOR UPDATE SKIP LOCKED`). Publica em `events-tickets.exchange`, com a ação como routing key. Se o lote veio cheio, o próximo sai em seguida, sem esperar o segundo (D28).
 5. O RabbitMQ confirma o recebimento (*publisher confirms*), e só então as linhas são marcadas como publicadas.
 6. A mensagem vai para a fila `logs.activity`, ligada a `event.*` e `ticket.*`.
 7. O `logs-service` grava e confirma.
@@ -258,12 +261,14 @@ O arquivo `gateway/nginx.conf` funciona como lista de permissões: o que não es
 | `/prometheus/` | Prometheus |
 | `/rabbitmq/` | Interface do RabbitMQ |
 | `/gateway/health` | Saúde do gateway |
+| `/app/` (e `/`, que redireciona) | Aplicação web, servida pelo próprio gateway |
 
 Detalhes úteis:
 
 - **DNS em tempo de requisição:** os destinos ficam em variáveis, e o NGINX usa o DNS do Docker. Por isso, um serviço reiniciado com outro IP volta a ser encontrado.
 - **Serviço fora do ar:** o gateway responde `503 Service unavailable`.
 - **Swagger (D14):** cada serviço serve o Swagger no caminho público, para os dois não colidirem e o "Try it out" funcionar pelo gateway.
+- **Aplicação web (D24):** arquivos estáticos de `frontend/`, sem build. Como estão na mesma origem da API, não há CORS, e a página entra pela porta 8080 como qualquer outro cliente. Ela não tem regra de negócio: chama as rotas públicas e desenha o caminho de cada chamada. A parte síncrona acompanha a resposta HTTP. A assíncrona só aparece quando o registro com o mesmo `X-Correlation-Id` chega ao `logs-service`. A saúde de cada contêiner vem de `/health/*`, da API do RabbitMQ e do Prometheus.
 
 ## 10. Observabilidade
 
@@ -283,7 +288,7 @@ Detalhes úteis:
 | `tickets_issued_total`, `tickets_cancelled_total` | Principal | Ingressos emitidos e cancelados |
 | `events_spot_operations_total` | Principal | Reservas e devoluções, por resultado |
 | `outbox_messages_published_total` | Principal | Mensagens confirmadas pelo RabbitMQ |
-| `outbox_messages_pending` | Principal | Mensagens aguardando publicação |
+| `outbox_messages_pending` | Principal | Total de mensagens aguardando publicação, contado na tabela a cada ciclo |
 | `logs_messages_consumed_total` | Logs | Mensagens consumidas, por resultado (`processed`, `duplicate`, `rejected`, `retried`) |
 | `logs_entries_created_total` | Logs | Registros gravados, por origem (`rabbitmq` ou `api`) |
 
@@ -310,11 +315,12 @@ Ordem de subida, controlada por `depends_on` com `service_healthy`:
 ```
 events-tickets-db, logs-db, rabbitmq
   → events-tickets-service e logs-service (em paralelo)
-    → api-gateway e prometheus
+    → api-gateway e prometheus (só esperam o events-tickets-service)
       → grafana
 ```
 
-- **Independência:** o serviço principal não depende do `logs-service` para subir.
+- **Independência:** nada depende do `logs-service` para subir: nem o serviço principal, nem o gateway, nem o Prometheus (D27). Se ele falhar, a venda segue, e só as rotas de logs e de histórico respondem `503`.
+- **Reinício automático:** todos os contêineres usam `restart: unless-stopped`. Um processo que cai volta sozinho; `docker compose stop` mantém parado, como nos experimentos de falha.
 - **Healthchecks:** cada contêiner informa quando está pronto de verdade, não só iniciado.
 - **Volumes:** `events_tickets_pgdata`, `logs_pgdata`, `rabbitmq_data` e `prometheus_data` mantêm os dados.
 - **Sem `.env`:** os valores estão no `docker-compose.yml`, para bastar `docker compose up --build`.
@@ -326,6 +332,9 @@ events-tickets-db, logs-db, rabbitmq
 | Falha | Comportamento |
 |---|---|
 | Erro ao salvar o ingresso | `500`, e o rollback desfaz a reserva |
+| Inscrição em evento encerrado ou inexistente | `400 Event has already ended` ou `404 Event not found`, sem consumir vaga |
+| Processo de um serviço cai | O Docker o reinicia sozinho (`restart: unless-stopped`) |
+| Muitas mensagens acumuladas na outbox | Os lotes de 50 saem um atrás do outro, sem esperar 1 s entre eles |
 | Duas inscrições iguais ao mesmo tempo | Uma é emitida; a outra recebe `409`, e a vaga volta |
 | Duas pessoas pela última vaga | Uma é emitida; a outra recebe `409` |
 | Dois cancelamentos iguais ao mesmo tempo | Um funciona; a vaga volta uma única vez |
@@ -366,12 +375,17 @@ Detalhes em [decisoes.md](decisoes.md).
 | D21 | Histórico por HTTP síncrono | Confirmada |
 | D22 | Cancelar ou remover evento cancela ingressos na mesma transação | Confirmada |
 | D23 | Validação responde `400` no serviço principal | Provisória |
+| D24 | Aplicação web estática servida pelo gateway | Confirmada |
+| D25 | Evento encerrado não aceita inscrições | Regra confirmada |
+| D26 | Listagens e históricos paginados, com o total | Provisória |
+| D27 | Reinício automático e subida sem depender do `logs-service` | Provisória |
+| D28 | Publicador da outbox sem gargalo | Provisória |
 
 ## 14. Testes
 
 | Onde | Ferramenta | Cobre |
 |---|---|---|
-| `events-tickets-service/src/**/*.spec.ts` | Jest | Emissão, cancelamento, cascata de evento, capacidade, DTOs, outbox e cliente HTTP do histórico |
+| `events-tickets-service/src/**/*.spec.ts` | Jest | Emissão (inclusive evento encerrado), cancelamento, cascata de evento, capacidade, paginação, DTOs, outbox (lotes, métrica e conexão fora da transação) e cliente HTTP do histórico |
 | `logs-service/tests/` | `pytest` | CRUD, imutabilidade, arquivamento, filtros, Swagger, métricas e consumidor |
 
 Eles usam simulações (Jest) e SQLite em memória (`pytest`), então rodam sem Docker. Por isso **não provam concorrência**: isso foi validado com os contêineres e o PostgreSQL reais (30 inscrições para 5 vagas, 10 inscrições simultâneas do mesmo documento, broker fora, `logs-service` fora e fila ainda não criada).
@@ -388,7 +402,7 @@ Fale delas com tranquilidade: são escolhas de escopo.
 - **Sem autenticação:** qualquer pessoa com acesso à API pode criar, cancelar e consultar dados, incluindo e-mail e documento, e pode arquivar registros. A autenticação ficou fora do escopo.
 - **Histórico com cerca de 1 s de atraso:** o tempo de a outbox publicar e o `logs-service` gravar. Com o broker ou o `logs-service` fora, o atraso dura até eles voltarem; nada se perde.
 - **Uma instância de cada serviço**, sem escala horizontal configurada.
-- **Sem migrações**, e as listagens de eventos e ingressos não são paginadas (a de logs é).
+- **Sem migrações** (D8). As listagens são paginadas (D26), mas a aplicação web mostra só a primeira página de cada uma, com um aviso quando há mais.
 - **Credenciais fixas** no `docker-compose.yml`, aceitáveis só em ambiente local.
 - **Métricas do gateway** não vão para o Prometheus; o NGINX aparece só nos logs.
 

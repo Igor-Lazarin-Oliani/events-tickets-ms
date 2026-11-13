@@ -54,14 +54,14 @@ export class CreateEventDto {
   @MaxLength(500)
   location: string;
 
-  @ApiProperty({ description: 'Início, com fuso horário.', example: '2026-11-20T08:00:00-04:00' })
+  @ApiProperty({ description: 'Início, com fuso horário.', example: '2027-03-20T08:00:00-04:00' })
   @IsISO8601({ strict: true })
   @Matches(WITH_TIMEZONE, { message: TIMEZONE_MESSAGE })
   start_at: string;
 
   @ApiProperty({
     description: 'Fim, com fuso horário e posterior ao início.',
-    example: '2026-11-20T18:00:00-04:00',
+    example: '2027-03-20T18:00:00-04:00',
   })
   @IsISO8601({ strict: true })
   @Matches(WITH_TIMEZONE, { message: TIMEZONE_MESSAGE })

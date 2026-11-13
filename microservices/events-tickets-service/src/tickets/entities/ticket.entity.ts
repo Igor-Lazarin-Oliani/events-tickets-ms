@@ -29,7 +29,7 @@ export class EventSnapshot {
   @ApiProperty({ example: 'Auditório da FACOM, Campo Grande - MS' })
   location: string;
 
-  @ApiProperty({ example: '2026-11-20T12:00:00Z' })
+  @ApiProperty({ example: '2027-03-20T12:00:00Z' })
   start_at: string;
 }
 

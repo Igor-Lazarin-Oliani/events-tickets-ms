@@ -14,7 +14,7 @@ cd events-tickets-ms
 docker compose up --build -d
 ```
 
-Depois, abra o Swagger de [eventos e ingressos](http://localhost:8080/docs/events-tickets) e de [logs](http://localhost:8080/docs/logs), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
+Depois, abra a [aplicação web](http://localhost:8080/), que mostra cada chamada atravessando os componentes, ou o Swagger de [eventos e ingressos](http://localhost:8080/docs/events-tickets) e de [logs](http://localhost:8080/docs/logs), ou siga o [roteiro de demonstração](#roteiro-de-demonstração).
 
 ## Requisitos atendidos
 
@@ -25,6 +25,7 @@ Depois, abra o Swagger de [eventos e ingressos](http://localhost:8080/docs/event
 | Conteinerização | Um `Dockerfile` por serviço e `docker-compose.yml` orquestrando os 8 contêineres na rede `events-tickets-network` |
 | API Gateway | NGINX como única porta de entrada, com lista de rotas permitidas |
 | Comunicação entre serviços | JSON via RabbitMQ para gravar cada atividade, e HTTP REST síncrono para consultar o histórico |
+| Aplicação web | Página em `/app/`, servida pelo próprio gateway: CRUD de eventos, ingressos e registros, com o diagrama dos contêineres e o rastro de cada chamada |
 | Documentação interativa | Swagger UI dos dois serviços, acessível pelo gateway |
 | Observabilidade | Prometheus coletando as métricas dos serviços, painéis no Grafana e logs estruturados correlacionados entre gateway e serviços |
 | Mensageria assíncrona (bônus) | RabbitMQ com padrão outbox: toda mudança em eventos e ingressos vira uma mensagem consumida pelo `logs-service` |
@@ -35,7 +36,7 @@ O ambiente tem um API Gateway como única porta de entrada, dois microsserviços
 
 ```mermaid
 flowchart TB
-    cliente["Swagger UI / curl / Postman"]
+    cliente["Navegador: aplicação web (/app/)<br/>Swagger UI / curl"]
     subgraph rede["Rede Docker: events-tickets-network"]
         gateway["api-gateway<br/>NGINX"]
         core["events-tickets-service<br/>NestJS :3000"]
@@ -87,19 +88,20 @@ O `logs-service` é um serviço de domínio (auditoria do que aconteceu com even
 
 ## Principais fluxos
 
-**Emissão de ingresso (`POST /tickets`):** o serviço valida o evento e a duplicidade e, em uma única transação, reserva a vaga, salva o ingresso e grava as atividades `ticket.issued` e `event.spot_reserved`. Qualquer falha desfaz tudo, inclusive a vaga.
+**Emissão de ingresso (`POST /tickets`):** o serviço confere se o evento existe, está aberto e ainda não terminou, e se o participante já está inscrito. Depois, em uma única transação, reserva a vaga, salva o ingresso e grava as atividades `ticket.issued` e `event.spot_reserved`. Qualquer falha desfaz tudo, inclusive a vaga.
 
 **Cancelamento (`DELETE /tickets/{id}`):** na mesma transação, o ingresso passa para `CANCELLED`, o registro é mantido, a vaga volta ao evento e as atividades são gravadas.
 
 **Cancelamento ou remoção de evento:** na mesma transação, os ingressos ativos do evento são cancelados. A resposta já sai com tudo atualizado, e os ingressos mantêm uma cópia dos dados do evento (`event_snapshot`).
 
-**Registro de atividades (assíncrono):** cada mudança grava mensagens na tabela `outbox_messages`, na mesma transação (padrão *outbox*). A cada segundo, o serviço principal as publica no RabbitMQ, e o `logs-service` as grava. Se o broker ou o `logs-service` estiverem fora do ar, as mensagens aguardam e são entregues quando eles voltarem.
+**Registro de atividades (assíncrono):** cada mudança grava mensagens na tabela `outbox_messages`, na mesma transação (padrão *outbox*). A cada segundo, o serviço principal as publica no RabbitMQ em lotes de até 50, e o `logs-service` as grava; se houver acúmulo, os lotes seguintes saem em sequência, sem esperar. Se o broker ou o `logs-service` estiverem fora do ar, as mensagens aguardam e são entregues quando eles voltarem.
 
-**Histórico (síncrono):** `GET /events/{id}/history` e `GET /tickets/{id}/history` consultam o `logs-service` por HTTP e devolvem as atividades em ordem cronológica. Com o `logs-service` fora do ar, só essas rotas respondem `503`.
+**Histórico (síncrono):** `GET /events/{id}/history` e `GET /tickets/{id}/history` consultam o `logs-service` por HTTP e devolvem as atividades em ordem cronológica, em páginas de até 500, com o `total` de atividades. Com o `logs-service` fora do ar, só essas rotas respondem `503`.
 
 **Regras principais:**
 
 - A reserva de vagas é atômica, e requisições simultâneas não vendem mais vagas do que existem.
+- Só é possível se inscrever em evento que existe e ainda não terminou: com o `end_at` no passado, a inscrição é recusada.
 - O evento passa para `SOLD_OUT` ao esgotar e volta para `PUBLISHED` quando uma vaga é devolvida.
 - Cada documento pode ter apenas uma inscrição ativa por evento.
 - Ao alterar a capacidade de um evento, as vagas já ocupadas são preservadas.
@@ -115,17 +117,19 @@ Todas as rotas públicas são acessadas pelo gateway, em `http://localhost:8080`
 | Método e rota | Descrição |
 |---|---|
 | `POST /events` | Cria um evento |
-| `GET /events` | Lista os eventos (filtros: `category`, `status`) |
+| `GET /events` | Lista os eventos (filtros: `category`, `status`; paginação com `limit` e `offset`) |
 | `GET /events/{id}` | Busca um evento |
 | `PUT /events/{id}` | Atualiza um evento; `CANCELLED` cancela os ingressos ativos |
 | `DELETE /events/{id}` | Remove o evento e cancela os ingressos ativos |
-| `GET /events/{id}/history` | Histórico do evento, vindo do `logs-service` |
-| `POST /tickets` | Realiza a inscrição e emite o ingresso |
-| `GET /tickets` | Lista os ingressos (filtros: `event_id`, `participant_email`, `status`) |
+| `GET /events/{id}/history` | Histórico do evento, vindo do `logs-service` (paginação com `limit` e `offset`) |
+| `POST /tickets` | Realiza a inscrição e emite o ingresso, se o evento ainda não terminou |
+| `GET /tickets` | Lista os ingressos (filtros: `event_id`, `participant_email`, `status`; paginação com `limit` e `offset`) |
 | `GET /tickets/{id}` | Consulta por UUID ou `ticket_code` |
 | `PUT /tickets/{id}` | Atualiza o ingresso ou realiza o check-in |
 | `DELETE /tickets/{id}` | Cancela o ingresso e devolve a vaga |
-| `GET /tickets/{id}/history` | Histórico do ingresso, vindo do `logs-service` |
+| `GET /tickets/{id}/history` | Histórico do ingresso, vindo do `logs-service` (paginação com `limit` e `offset`) |
+
+As listagens dos dois serviços (`GET /events`, `GET /tickets` e `GET /logs`) são paginadas: `limit` vai de 1 a 500 (padrão 100), `offset` pula itens, e o cabeçalho `X-Total-Count` traz o total que atende aos filtros. Os históricos usam `limit` padrão 500 e informam o total no campo `total`.
 
 ### `logs-service`
 
@@ -139,7 +143,7 @@ Todas as rotas públicas são acessadas pelo gateway, em `http://localhost:8080`
 
 ### Documentação e telemetria
 
-Disponíveis pelo gateway, com o ambiente em execução:
+Disponíveis pelo gateway, com o ambiente em execução. A [aplicação web](http://localhost:8080/) (`/app/`) reúne tudo em uma página.
 
 | Recurso | Eventos e ingressos | Logs |
 |---|---|---|
@@ -183,6 +187,10 @@ docker compose down      # mantém os dados
 docker compose down -v   # apaga também os dados
 ```
 
+Os contêineres usam `restart: unless-stopped`: se um processo cair, o Docker o reinicia sozinho. Um `docker compose stop` continua valendo, e o contêiner fica parado até você subi-lo de novo. Contêineres que ficarem no ar voltam quando o Docker reiniciar, por isso encerre com `docker compose down` ao terminar.
+
+O `api-gateway` e o `prometheus` não dependem do `logs-service` para subir. Se ele demorar ou falhar, a venda funciona normalmente, e só as rotas de logs e de histórico respondem `503` até ele ficar `healthy`.
+
 Só o `api-gateway` publica porta no host. Serviços e bancos ficam acessíveis apenas na rede interna; para inspecionar um banco, use, por exemplo:
 
 ```sh
@@ -195,7 +203,23 @@ As credenciais estão no `docker-compose.yml` e são exclusivas do ambiente loca
 
 ## Roteiro de demonstração
 
-O roteiro parte de um ambiente no ar. Pode ser feito pelo Swagger UI ou pelos comandos `curl` mais abaixo.
+O roteiro parte de um ambiente no ar. Pode ser feito pela aplicação web, pelo Swagger UI ou pelos comandos `curl` mais abaixo.
+
+### Pela aplicação web
+
+Abra http://localhost:8080/. À esquerda fica a aplicação; à direita, o diagrama dos 8 contêineres, os contadores do Prometheus e da fila, e o rastro de cada operação. Toda chamada leva um `X-Correlation-Id` com prefixo `ui-`, e a parte assíncrona só é marcada como concluída quando o registro com esse identificador chega ao `logs-service`.
+
+| # | Ação | O que observar |
+|---|---|---|
+| 1 | **+ Novo evento**, com capacidade 5 | Navegador → gateway → `events-tickets-service` → banco; depois, `event.created` chega ao `logs-service` pelo RabbitMQ |
+| 2 | **Inscrever** um participante | `201` e uma transação com vaga, ingresso e outbox; `ticket.issued` e `event.spot_reserved` chegam ao `logs-service` |
+| 3 | **⚡ Concorrência** com 20 inscrições | Só 4 recebem `201`, as outras 16 recebem `409 Event is sold out`, e o evento vai a `SOLD_OUT`: nenhuma vaga vendida além da capacidade |
+| 4 | **Check-in** e **Cancelar** em ingressos | A vaga cancelada volta, e o evento retorna a `PUBLISHED` |
+| 5 | **Histórico** do evento | A linha verde-azulada mostra o `events-tickets-service` consultando o `logs-service` por HTTP REST |
+| 6 | Aba **Registro de atividades** | Triagem (`status` e notas), arquivamento e registro manual de ocorrência |
+| 7 | **Experimentos de falha** | Comandos para derrubar o `logs-service` ou o RabbitMQ e ver as mensagens esperando na fila ou na outbox |
+
+O botão **grep** de cada operação copia o comando que mostra a mesma operação nos logs do gateway e dos dois serviços.
 
 ### Pelo Swagger UI
 
@@ -231,7 +255,7 @@ issue() {
 }
 
 # 1. Criar um evento com 2 vagas
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2026-11-20T08:00:00-04:00","end_at":"2026-11-20T18:00:00-04:00","max_capacity":2}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Workshop Docker","category":"WORKSHOP","modality":"ONLINE","location":"https://example.com/live","start_at":"2027-03-20T08:00:00-04:00","end_at":"2027-03-20T18:00:00-04:00","max_capacity":2}')
 echo "$EVENT"
 EVENT_ID=$(echo "$EVENT" | extract_id)
 
@@ -293,7 +317,7 @@ curl -s "$GATEWAY/tickets/$TICKET_1_ID/history"; echo
 Cancelar um evento cancela os ingressos ativos na mesma transação:
 
 ```sh
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2026-12-05T18:00:00-04:00","end_at":"2026-12-05T23:00:00-04:00","max_capacity":10}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Festival Indie","category":"CONCERT","modality":"IN_PERSON","location":"Parque das Nacoes","start_at":"2027-04-10T18:00:00-04:00","end_at":"2027-04-10T23:00:00-04:00","max_capacity":10}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 issue 'Eva Nunes' 'eva@example.com' '2026000005'; echo
 issue 'Fabio Ramos' 'fabio@example.com' '2026000006'; echo
@@ -307,6 +331,23 @@ curl -s "$GATEWAY/tickets?event_id=$EVENT_ID&status=CANCELLED"; echo
 curl -s -X PUT "$GATEWAY/events/$EVENT_ID" -H "$JSON" -d '{"status":"PUBLISHED"}'; echo
 ```
 
+### Evento encerrado
+
+Um evento cujo `end_at` já passou não aceita inscrições, mesmo com vagas:
+
+```sh
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Semana Academica 2025","category":"ACADEMIC","modality":"IN_PERSON","location":"FACOM","start_at":"2025-10-20T08:00:00-04:00","end_at":"2025-10-24T18:00:00-04:00","max_capacity":50}')
+EVENT_ID=$(echo "$EVENT" | extract_id)
+
+# 400 Event has already ended, e nenhuma vaga é consumida
+issue 'Hugo Prado' 'hugo@example.com' '2026000008'; echo
+show_event
+
+# Evento inexistente: 404 Event not found
+EVENT_ID=00000000-0000-4000-8000-000000000000
+issue 'Hugo Prado' 'hugo@example.com' '2026000008'; echo
+```
+
 ### Falha do `logs-service` (opcional)
 
 Com o serviço de logs fora do ar, a venda continua, e só o histórico fica indisponível:
@@ -315,7 +356,7 @@ Com o serviço de logs fora do ar, a venda continua, e só o histórico fica ind
 docker compose stop logs-service
 
 # Criar um evento e emitir um ingresso funcionam normalmente
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Hackathon UFMS","category":"ACADEMIC","modality":"HYBRID","location":"FACOM","start_at":"2026-12-10T08:00:00-04:00","end_at":"2026-12-10T20:00:00-04:00","max_capacity":30}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Hackathon UFMS","category":"ACADEMIC","modality":"HYBRID","location":"FACOM","start_at":"2027-05-15T08:00:00-04:00","end_at":"2027-05-15T20:00:00-04:00","max_capacity":30}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 TICKET_3_ID=$(issue 'Gabi Souza' 'gabi@example.com' '2026000007' | extract_id)
 curl -s "$GATEWAY/tickets/$TICKET_3_ID"; echo
@@ -336,7 +377,7 @@ Com o broker fora do ar, a API continua respondendo, e as atividades aguardam na
 
 ```sh
 docker compose stop rabbitmq
-EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2026-12-06T07:00:00-04:00","end_at":"2026-12-06T11:00:00-04:00","max_capacity":10}')
+EVENT=$(curl -s -X POST "$GATEWAY/events" -H "$JSON" -d '{"title":"Corrida de Rua","category":"SPORTS","modality":"IN_PERSON","location":"Parque Laguna","start_at":"2027-04-18T07:00:00-04:00","end_at":"2027-04-18T11:00:00-04:00","max_capacity":10}')
 EVENT_ID=$(echo "$EVENT" | extract_id)
 
 # A mensagem event.created aguarda publicação
@@ -371,6 +412,7 @@ pytest
 events-tickets-ms/
 ├── README.md
 ├── docker-compose.yml            # Orquestração dos contêineres
+├── frontend/                     # Aplicação web estática, servida pelo gateway em /app/
 ├── gateway/                      # Configuração do API Gateway (NGINX)
 ├── messaging/                    # Configuração do RabbitMQ
 ├── observability/                # Configuração do Prometheus e do Grafana

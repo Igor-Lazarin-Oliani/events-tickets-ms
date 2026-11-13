@@ -3,7 +3,7 @@ import { MetricsService } from '../metrics/metrics.service';
 import { fakeDataSource } from '../testing/fakes';
 import { buildActivityMessage } from './activity';
 import { OutboxMessage } from './entities/outbox-message.entity';
-import { EXCHANGE, OutboxPublisher } from './outbox.publisher';
+import { BATCH_SIZE, EXCHANGE, OutboxPublisher } from './outbox.publisher';
 
 interface Published {
   exchange: string;
@@ -51,21 +51,25 @@ function outboxMessage(action: string): OutboxMessage {
   });
 }
 
-function setup(pending: OutboxMessage[]) {
+function setup(pending: OutboxMessage[], totalPending = pending.length) {
   const { dataSource, manager } = fakeDataSource();
   const outbox = {
+    countPending: jest.fn(async () => totalPending),
     lockPending: jest.fn(async () => pending),
     markPublished: jest.fn(async () => undefined),
   };
   const metrics = new MetricsService();
   const recorded = jest.spyOn(metrics, 'recordMessagePublished');
+  const gauge = jest.spyOn(metrics, 'setOutboxPending');
   const channel = new FakeChannel();
   const connection = new FakeConnection(channel);
   const publisher = new OutboxPublisher(dataSource as never, outbox as never, metrics);
   const connect = jest.fn(async () => connection);
   publisher.connectionFactory = connect as never;
-  return { publisher, manager, outbox, channel, connect, recorded };
+  return { publisher, dataSource, manager, outbox, channel, connection, connect, recorded, gauge };
 }
+
+const batchOf = (size: number) => Array.from({ length: size }, () => outboxMessage('ticket.issued'));
 
 describe('OutboxPublisher.publishPending', () => {
   it('publica com confirmação e só então marca as mensagens como publicadas', async () => {
@@ -114,12 +118,72 @@ describe('OutboxPublisher.publishPending', () => {
     expect(outbox.markPublished).not.toHaveBeenCalled();
   });
 
-  it('mantém o lote pendente com o broker fora do ar', async () => {
-    const { publisher, outbox, connect } = setup([outboxMessage('ticket.issued')]);
+  it('mantém o lote pendente com o broker fora do ar, sem abrir transação', async () => {
+    const { publisher, dataSource, outbox, connect } = setup([outboxMessage('ticket.issued')]);
     connect.mockRejectedValue(new Error('ECONNREFUSED'));
 
     await expect(publisher.publishPending()).rejects.toThrow('ECONNREFUSED');
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(outbox.lockPending).not.toHaveBeenCalled();
     expect(outbox.markPublished).not.toHaveBeenCalled();
+  });
+
+  it('conecta ao broker antes de abrir a transação que trava as mensagens', async () => {
+    const { publisher, dataSource, connect } = setup([outboxMessage('ticket.issued')]);
+
+    await publisher.publishPending();
+
+    expect(connect.mock.invocationCallOrder[0]).toBeLessThan(
+      dataSource.transaction.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('informa na métrica todo o acúmulo da outbox, e não só o lote', async () => {
+    const { publisher, gauge } = setup(batchOf(50), 120);
+
+    await expect(publisher.publishPending()).resolves.toBe(50);
+
+    expect(gauge.mock.calls.map(([count]) => count)).toEqual([120, 70]);
+  });
+
+  it('mantém na métrica o acúmulo enquanto o broker está fora do ar', async () => {
+    const { publisher, connect, gauge } = setup(batchOf(50), 120);
+    connect.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await expect(publisher.publishPending()).rejects.toThrow('ECONNREFUSED');
+
+    expect(gauge.mock.calls.map(([count]) => count)).toEqual([120]);
+  });
+});
+
+describe('OutboxPublisher.runCycle', () => {
+  const pollMs = 1000;
+  const retryMs = 5000;
+
+  it('busca o próximo lote em seguida quando o lote veio cheio', async () => {
+    const { publisher } = setup(batchOf(BATCH_SIZE), BATCH_SIZE * 3);
+
+    await expect(publisher.runCycle()).resolves.toBe(0);
+  });
+
+  it('espera o intervalo normal quando o lote não veio cheio', async () => {
+    const { publisher } = setup([outboxMessage('ticket.issued')]);
+
+    await expect(publisher.runCycle()).resolves.toBe(pollMs);
+  });
+
+  it('espera o intervalo normal sem mensagens pendentes', async () => {
+    const { publisher } = setup([]);
+
+    await expect(publisher.runCycle()).resolves.toBe(pollMs);
+  });
+
+  it('sobrevive à falha do broker, fecha a conexão e espera antes de tentar de novo', async () => {
+    const { publisher, channel, connection } = setup([outboxMessage('ticket.issued')]);
+    channel.waitForConfirms.mockRejectedValue(new Error('channel closed'));
+
+    await expect(publisher.runCycle()).resolves.toBe(retryMs);
+    expect(connection.close).toHaveBeenCalled();
   });
 });
 
