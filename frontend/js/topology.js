@@ -2,76 +2,76 @@
 // quem recebeu a evidência (resposta HTTP, registro no logs-service, contador do RabbitMQ).
 import { s, sleep } from './util.js';
 
-const VIEW_W = 1160;
-const VIEW_H = 515;
-const NODE_H = 64;
+const VIEW_W = 1290;
+const VIEW_H = 600;
+const NODE_H = 80;
 
 export const NODES = {
   browser: {
-    x: 72, y: 265, w: 124, title: 'Navegador', sub: 'aplicação web',
+    x: 82, y: 300, w: 144, title: 'Navegador', sub: 'aplicação web',
     tip: 'Esta página. Toda chamada sai daqui e entra pela única porta publicada, a 8080 do api-gateway.',
   },
   gateway: {
-    x: 250, y: 265, w: 140, title: 'api-gateway', sub: 'NGINX · :8080',
+    x: 292, y: 300, w: 164, title: 'api-gateway', sub: 'NGINX · :8080',
     tip: 'Única entrada do sistema. Encaminha só as rotas permitidas, esconde a topologia e propaga o X-Correlation-Id.',
   },
   events: {
-    x: 520, y: 85, w: 210, title: 'events-service', sub: 'NestJS · JavaScript',
+    x: 595, y: 70, w: 250, title: 'events-service', sub: 'NestJS · JavaScript',
     tip: 'Eventos e vagas. Reserva a vaga por HTTP, devolve ao consumir a fila events.spot-releases e avisa o tickets-service quando um evento é cancelado.',
   },
   tickets: {
-    x: 520, y: 265, w: 210, title: 'tickets-service', sub: 'NestJS · TypeScript',
+    x: 595, y: 300, w: 250, title: 'tickets-service', sub: 'NestJS · TypeScript',
     tip: 'Inscrições, ingressos e check-in. Reserva a vaga no events-service antes de salvar o ingresso e pede a devolução pela outbox.',
   },
   logs: {
-    x: 520, y: 445, w: 210, title: 'logs-service', sub: 'FastAPI · Python',
+    x: 595, y: 530, w: 250, title: 'logs-service', sub: 'FastAPI · Python',
     tip: 'Registro de atividades: consome a fila logs.activity, grava cada mensagem uma única vez e oferece o CRUD de triagem.',
   },
   rabbitmq: {
-    x: 780, y: 175, w: 170, title: 'rabbitmq', sub: '3 filas',
+    x: 890, y: 185, w: 210, title: 'rabbitmq', sub: '3 filas',
     tip: 'Broker de mensagens. Filas logs.activity (atividades), tickets.event-updates (eventos cancelados) e events.spot-releases (devolução de vagas).',
   },
   eventsdb: {
-    x: 1030, y: 85, w: 180, db: true, title: 'events-db', sub: 'PostgreSQL 16',
+    x: 1170, y: 70, w: 200, db: true, title: 'events-db', sub: 'PostgreSQL 16',
     tip: 'Banco exclusivo do events-service: eventos, reservas de vaga por ingresso e a outbox.',
   },
   ticketsdb: {
-    x: 1030, y: 265, w: 180, db: true, title: 'tickets-db', sub: 'PostgreSQL 16',
+    x: 1170, y: 300, w: 200, db: true, title: 'tickets-db', sub: 'PostgreSQL 16',
     tip: 'Banco exclusivo do tickets-service: ingressos, eventos encerrados e a outbox.',
   },
   logsdb: {
-    x: 1030, y: 445, w: 180, db: true, title: 'logs-db', sub: 'PostgreSQL 16',
+    x: 1170, y: 530, w: 200, db: true, title: 'logs-db', sub: 'PostgreSQL 16',
     tip: 'Banco exclusivo do logs-service: a tabela activity_logs.',
   },
   prometheus: {
-    x: 780, y: 360, w: 170, title: 'prometheus', sub: 'métricas',
+    x: 890, y: 415, w: 210, title: 'prometheus', sub: 'métricas',
     tip: 'Coleta /metrics dos três serviços a cada 5 s.',
   },
   grafana: {
-    x: 1030, y: 360, w: 180, title: 'grafana', sub: 'painéis',
+    x: 1170, y: 415, w: 200, title: 'grafana', sub: 'painéis',
     tip: 'Painel provisionado, que consulta o Prometheus com PromQL.',
   },
 };
 
 // via: pontos intermediários, para a linha contornar os nós. labelAt: posição do rótulo.
 const EDGES = [
-  { from: 'browser', to: 'gateway', kind: 'http', label: ':8080', labelAt: [156, 257] },
-  { from: 'gateway', to: 'events', kind: 'http', via: [[345, 265], [345, 85]] },
-  { from: 'gateway', to: 'tickets', kind: 'http', label: 'HTTP', labelAt: [367, 257] },
-  { from: 'gateway', to: 'logs', kind: 'http', via: [[345, 265], [345, 445]] },
-  { from: 'events', to: 'eventsdb', kind: 'sql', label: 'SQL', labelAt: [880, 77] },
-  { from: 'tickets', to: 'ticketsdb', kind: 'sql', label: 'SQL', labelAt: [880, 257] },
-  { from: 'logs', to: 'logsdb', kind: 'sql', label: 'SQL', labelAt: [880, 437] },
-  { from: 'tickets', to: 'events', kind: 'rest', label: 'REST · reserva', labelAt: [474, 179] },
-  { from: 'tickets', to: 'logs', kind: 'rest', label: 'REST · histórico', labelAt: [470, 359] },
-  { from: 'events', to: 'logs', kind: 'rest', via: [[390, 105], [390, 425]], label: 'REST', labelAt: [367, 352] },
-  { from: 'events', to: 'rabbitmq', kind: 'amqp', label: 'AMQP', labelAt: [672, 120] },
-  { from: 'tickets', to: 'rabbitmq', kind: 'amqp', label: 'AMQP', labelAt: [706, 224] },
-  { from: 'rabbitmq', to: 'logs', kind: 'amqp', label: 'AMQP', labelAt: [706, 292] },
+  { from: 'browser', to: 'gateway', kind: 'http', label: ':8080', labelAt: [182, 290] },
+  { from: 'gateway', to: 'events', kind: 'http', via: [[400, 300], [400, 70]] },
+  { from: 'gateway', to: 'tickets', kind: 'http', label: 'HTTP', labelAt: [424, 290] },
+  { from: 'gateway', to: 'logs', kind: 'http', via: [[400, 300], [400, 530]] },
+  { from: 'events', to: 'eventsdb', kind: 'sql', label: 'SQL', labelAt: [1030, 60] },
+  { from: 'tickets', to: 'ticketsdb', kind: 'sql', label: 'SQL', labelAt: [1030, 290] },
+  { from: 'logs', to: 'logsdb', kind: 'sql', label: 'SQL', labelAt: [1030, 520] },
+  { from: 'tickets', to: 'events', kind: 'rest', label: 'REST · reserva', labelAt: [530, 190] },
+  { from: 'tickets', to: 'logs', kind: 'rest', label: 'REST · histórico', labelAt: [525, 420] },
+  { from: 'events', to: 'logs', kind: 'rest', via: [[450, 95], [450, 505]], label: 'REST', labelAt: [425, 452] },
+  { from: 'events', to: 'rabbitmq', kind: 'amqp', label: 'AMQP', labelAt: [762, 116] },
+  { from: 'tickets', to: 'rabbitmq', kind: 'amqp', label: 'AMQP', labelAt: [778, 258] },
+  { from: 'rabbitmq', to: 'logs', kind: 'amqp', label: 'AMQP', labelAt: [690, 372] },
   { from: 'prometheus', to: 'events', kind: 'scrape' },
   { from: 'prometheus', to: 'tickets', kind: 'scrape' },
-  { from: 'prometheus', to: 'logs', kind: 'scrape', label: 'coleta /metrics', labelAt: [668, 427] },
-  { from: 'grafana', to: 'prometheus', kind: 'scrape', label: 'PromQL', labelAt: [905, 352] },
+  { from: 'prometheus', to: 'logs', kind: 'scrape', label: 'coleta /metrics', labelAt: [790, 500] },
+  { from: 'grafana', to: 'prometheus', kind: 'scrape', label: 'PromQL', labelAt: [1030, 405] },
 ];
 
 const nodeEls = {};
@@ -111,7 +111,7 @@ export function initTopology(svg) {
 
 function renderNode(id, node) {
   const w = node.w;
-  const top = node.db ? 4 : 0;
+  const top = node.db ? 5 : 0;
   const g = s('g', {
     class: `node${node.db ? ' db' : ''}`,
     'data-state': 'unknown',
@@ -119,20 +119,20 @@ function renderNode(id, node) {
   });
   if (node.db) {
     g.append(
-      s('path', { class: 'node-box', d: `M0 7 V${NODE_H - 7} A${w / 2} 7 0 0 0 ${w} ${NODE_H - 7} V7` }),
-      s('ellipse', { class: 'node-box', cx: w / 2, cy: 7, rx: w / 2, ry: 7 }),
+      s('path', { class: 'node-box', d: `M0 9 V${NODE_H - 9} A${w / 2} 9 0 0 0 ${w} ${NODE_H - 9} V9` }),
+      s('ellipse', { class: 'node-box', cx: w / 2, cy: 9, rx: w / 2, ry: 9 }),
     );
   } else {
-    g.append(s('rect', { class: 'node-box', width: w, height: NODE_H, rx: 10 }));
+    g.append(s('rect', { class: 'node-box', width: w, height: NODE_H, rx: 12 }));
   }
-  const detail = s('text', { class: 'node-detail', x: 12, y: 55 + top });
-  const badgeText = s('text', { 'text-anchor': 'middle', y: 4 });
-  const badgeBox = s('rect', { y: -10, height: 20, rx: 10 });
+  const detail = s('text', { class: 'node-detail', x: 14, y: 69 + top });
+  const badgeText = s('text', { 'text-anchor': 'middle', y: 5 });
+  const badgeBox = s('rect', { y: -13, height: 26, rx: 13 });
   const badge = s('g', { class: 'node-badge', transform: `translate(${w} 0)`, visibility: 'hidden' }, badgeBox, badgeText);
   g.append(
-    s('circle', { class: 'node-dot', cx: w - 13, cy: 15 + top, r: 5.5 }),
-    s('text', { class: 'node-title', x: 12, y: 22 + top }, node.title),
-    s('text', { class: 'node-sub', x: 12, y: 39 + top }, node.sub),
+    s('circle', { class: 'node-dot', cx: w - 16, cy: 19 + top, r: 7 }),
+    s('text', { class: 'node-title', x: 14, y: 27 + top }, node.title),
+    s('text', { class: 'node-sub', x: 14, y: 48 + top }, node.sub),
     detail,
     badge,
     s('title', {}, node.tip),
@@ -159,10 +159,10 @@ export function setBadge(id, text) {
     el.badge.setAttribute('visibility', 'hidden');
     return;
   }
-  const width = 16 + String(text).length * 7.6;
+  const width = 20 + String(text).length * 9;
   el.badgeText.textContent = text;
-  el.badgeText.setAttribute('x', String(-width / 2 + 4));
-  el.badgeBox.setAttribute('x', String(-width + 4));
+  el.badgeText.setAttribute('x', String(-width / 2 + 5));
+  el.badgeBox.setAttribute('x', String(-width + 5));
   el.badgeBox.setAttribute('width', String(width));
   el.badge.setAttribute('visibility', 'visible');
 }
@@ -191,7 +191,7 @@ function pulse(id, kind) {
 }
 
 function failMark(x, y) {
-  const mark = s('text', { class: 'fail-mark', x, y: y + 6, 'text-anchor': 'middle' }, '✕');
+  const mark = s('text', { class: 'fail-mark', x, y: y + 9, 'text-anchor': 'middle' }, '✕');
   packetLayer.append(mark);
   setTimeout(() => mark.remove(), 1400);
 }
@@ -214,7 +214,7 @@ function pointAt(points, lengths, distance) {
 }
 
 /** Um pacote indo de um nó a outro. abortAt (0 a 1) para o pacote no meio do caminho, com um ✕. */
-export function hop(from, to, kind, { scale = 1, abortAt = null, radius = 6.5 } = {}) {
+export function hop(from, to, kind, { scale = 1, abortAt = null, radius = 9 } = {}) {
   if (document.hidden) return Promise.resolve();
   const entry = edgeEls.get(`${from}>${to}`);
   const points = entry?.points ?? [[NODES[from].x, NODES[from].y], [NODES[to].x, NODES[to].y]];
@@ -313,7 +313,7 @@ function resultKind(result) {
 export async function animateCall(routeName, resultPromise, { light: isRead = false, scale = 1 } = {}) {
   const route = ROUTES[routeName];
   const kind = isRead ? 'read' : 'http';
-  const opts = { scale: isRead ? scale * 0.6 : scale, radius: isRead ? 4.5 : 6.5 };
+  const opts = { scale: isRead ? scale * 0.6 : scale, radius: isRead ? 6.5 : 9 };
 
   await hop('browser', 'gateway', kind, opts);
   const result = await resultPromise;
@@ -367,6 +367,6 @@ export async function animatePublish(origins) {
 /** Coleta do Prometheus, confirmada pela métrica up=1. */
 export function animateScrape(targets) {
   for (const target of targets) {
-    void hop('prometheus', target, 'scrape', { scale: 1.6, radius: 4 });
+    void hop('prometheus', target, 'scrape', { scale: 1.6, radius: 6 });
   }
 }

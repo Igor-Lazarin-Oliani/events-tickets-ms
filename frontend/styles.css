@@ -77,7 +77,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(400px, 5fr) minmax(560px, 7fr);
+  grid-template-columns: minmax(380px, 9fr) minmax(620px, 16fr);
   gap: 16px;
   padding: 16px;
   height: calc(100vh - 52px);
@@ -113,6 +113,10 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .card-actions { display: flex; gap: 4px; }
 
 .caption { margin: 6px 0 0; font-size: 12px; color: var(--text-3); }
+
+/* O diagrama é o centro da demonstração: título, legenda e legenda inferior maiores. */
+.topology-card .card-head h2 { font-size: 17px; }
+.topology-card .caption { font-size: 13.5px; }
 
 .trace-card { flex: 1; min-height: 180px; display: flex; flex-direction: column; }
 
@@ -369,20 +373,21 @@ button.cid.as-link:hover { text-decoration: underline; }
 
 .legend {
   display: flex;
-  gap: 4px 12px;
+  gap: 6px 16px;
   list-style: none;
   margin: 0;
   padding: 0;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-2);
   flex-wrap: wrap;
 }
 .legend .line {
   display: inline-block;
-  width: 18px;
-  border-top: 3px solid;
+  width: 30px;
+  border-top: 5px solid;
+  border-radius: 3px;
   vertical-align: middle;
-  margin-right: 5px;
+  margin-right: 6px;
 }
 .line.http { border-color: var(--http); }
 .line.rest { border-color: var(--rest); }
@@ -390,37 +395,38 @@ button.cid.as-link:hover { text-decoration: underline; }
 .line.sql { border-color: var(--sql); }
 .line.scrape { border-color: var(--scrape); border-top-style: dashed; }
 
-#topology { display: block; width: 100%; height: auto; max-height: 46vh; }
+#topology { display: block; width: 100%; height: auto; max-height: 62vh; }
 
-#topology .wire { stroke-width: 2; opacity: 0.35; stroke-linejoin: round; transition: opacity 0.2s, stroke-width 0.2s, stroke 0.2s; }
+#topology .wire { stroke-width: 5; opacity: 0.7; stroke-linejoin: round; stroke-linecap: round; transition: opacity 0.2s, stroke-width 0.2s, stroke 0.2s; }
 #topology .edge.http .wire { stroke: var(--http); }
 #topology .edge.rest .wire { stroke: var(--rest); }
 #topology .edge.amqp .wire { stroke: var(--amqp); }
 #topology .edge.sql .wire { stroke: var(--sql); }
 /* A coleta cruza outras linhas; fica mais clara e só se destaca quando há um pacote passando. */
-#topology .edge.scrape .wire { stroke: var(--scrape); stroke-dasharray: 5 5; opacity: 0.2; }
-#topology .edge.lit .wire { opacity: 1; stroke-width: 3.5; }
+#topology .edge.scrape .wire { stroke: var(--scrape); stroke-width: 3; stroke-dasharray: 8 7; stroke-linecap: butt; opacity: 0.4; }
+#topology .edge.lit .wire { opacity: 1; stroke-width: 8; }
 #topology .edge.lit[data-lit="read"] .wire,
-#topology .edge.lit[data-lit="scrape"] .wire { opacity: 0.7; stroke-width: 2.5; }
+#topology .edge.lit[data-lit="scrape"] .wire { opacity: 0.85; stroke-width: 6; }
 #topology .edge.lit[data-lit="ok"] .wire { stroke: var(--ok); }
 #topology .edge.lit[data-lit="warn"] .wire { stroke: var(--warn); }
 #topology .edge.lit[data-lit="error"] .wire { stroke: var(--err); }
-#topology .edge.broken .wire { stroke: var(--err); stroke-dasharray: 6 5; opacity: 0.8; }
+#topology .edge.broken .wire { stroke: var(--err); stroke-dasharray: 12 9; stroke-linecap: butt; opacity: 0.9; }
 
 #topology .edge-label {
-  font-size: 12px;
+  font-size: 15px;
+  font-weight: 600;
   fill: var(--text-2);
   paint-order: stroke;
   stroke: var(--surface);
-  stroke-width: 4px;
+  stroke-width: 6px;
   stroke-linejoin: round;
 }
 
-#topology .node-box { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1.5; transition: fill 0.3s, stroke 0.3s; }
+#topology .node-box { fill: var(--surface); stroke: var(--border-strong); stroke-width: 2; transition: fill 0.3s, stroke 0.3s; }
 #topology .node.db .node-box { fill: var(--db-bg); }
-#topology .node-title { font-size: 14.5px; font-weight: 650; fill: var(--text); }
-#topology .node-sub { font-size: 12px; fill: var(--text-3); }
-#topology .node-detail { font-size: 12px; font-weight: 600; fill: var(--ok); }
+#topology .node-title { font-size: 19px; font-weight: 650; fill: var(--text); }
+#topology .node-sub { font-size: 15px; fill: var(--text-3); }
+#topology .node-detail { font-size: 15px; font-weight: 600; fill: var(--ok); }
 #topology .node-detail.warn { fill: var(--warn); }
 #topology .node-detail.error { fill: var(--err); }
 #topology .node-dot { fill: var(--text-3); }
@@ -443,9 +449,9 @@ button.cid.as-link:hover { text-decoration: underline; }
 #topology .node.pulse[data-pulse="error"] .node-box { stroke: var(--err); }
 
 #topology .node-badge rect { fill: var(--warn); }
-#topology .node-badge text { fill: #fff; font-size: 12px; font-weight: 700; }
+#topology .node-badge text { fill: #fff; font-size: 14.5px; font-weight: 700; }
 
-#topology .packet { stroke: #fff; stroke-width: 2; }
+#topology .packet { stroke: #fff; stroke-width: 2.5; }
 #topology .packet.http { fill: var(--http); }
 #topology .packet.rest { fill: var(--rest); }
 #topology .packet.amqp { fill: var(--amqp); }
@@ -455,7 +461,7 @@ button.cid.as-link:hover { text-decoration: underline; }
 #topology .packet.error { fill: var(--err); }
 #topology .packet.read, #topology .packet.scrape { fill: var(--scrape); stroke-width: 1.5; }
 
-#topology .fail-mark { fill: var(--err); font-size: 22px; font-weight: 800; animation: fade 1.4s forwards; }
+#topology .fail-mark { fill: var(--err); font-size: 30px; font-weight: 800; animation: fade 1.4s forwards; }
 
 /* ---------- Telemetria ---------- */
 
@@ -479,7 +485,7 @@ button.cid.as-link:hover { text-decoration: underline; }
   .pane-flow { gap: 8px; }
   .card { padding: 8px 12px; }
   .card .caption { display: none; }
-  #topology { max-height: 36vh; }
+  #topology { max-height: 50vh; }
   .kpi strong { font-size: 16px; line-height: 1.25; }
 }
 
