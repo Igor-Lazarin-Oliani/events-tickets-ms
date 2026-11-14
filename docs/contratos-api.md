@@ -1,8 +1,8 @@
 # Contratos da API
 
-Regras de comportamento e erros dos três serviços. Os campos das tabelas estão na seção 5 do [prompt.md](prompt.md). As referências no formato D1, D2 etc. estão em [decisoes.md](decisoes.md).
+Regras de comportamento e erros dos três serviços. Os campos das tabelas estão no [modelo de dados](arquitetura.md#modelo-de-dados), e as referências no formato D1, D2 etc., em [decisoes.md](decisoes.md).
 
-Este documento deve continuar consistente com o Swagger em `/docs/events`, `/docs/tickets` e `/docs/logs`.
+O Swagger de cada serviço, em `/docs/events`, `/docs/tickets` e `/docs/logs`, documenta os mesmos contratos.
 
 ## API Gateway (porta 8080)
 

@@ -1,26 +1,14 @@
 # Arquitetura
 
-Visão do que existe e do que está previsto. A especificação completa está em [prompt.md](prompt.md).
+Visão geral da arquitetura do `events-tickets-ms`: contêineres, modelo de dados, comunicação entre os serviços, configuração e observabilidade. Os contratos das rotas e das mensagens estão em [contratos-api.md](contratos-api.md), e as justificativas, em [decisoes.md](decisoes.md).
 
-<a id="estado-da-implementacao"></a>
+## Histórico de versões
 
-## Estado da implementação
-
-| Fase | Entrega | Estado |
-|---|---|---|
-| 1 | `events-service` (FastAPI + PostgreSQL) | Concluída na versão 1; substituída pela fase 11 |
-| 2 | `tickets-service` (NestJS + PostgreSQL) | Concluída na versão 1; base do `tickets-service` da fase 11 |
-| 3 | `docker-compose.yml` com 4 contêineres | Concluída e validada |
-| 4 | `README.md` e roteiro de demonstração | Concluída e validada |
-| 5 | API Gateway NGINX | Concluída e validada |
-| 6 | Prometheus e Grafana | Concluída e validada |
-| 7 | Mensageria com RabbitMQ (bônus) | Concluída e validada |
-| 8 | Versão 2: `events-tickets-service` (NestJS) + `logs-service` (Python) | Concluída; substituída pela fase 11 |
-| 9 | Aplicação web estática servida pelo `api-gateway` (D24) | Concluída e validada no navegador |
-| 10 | Ajustes de desempenho, resiliência e regra de evento encerrado (D25 a D28) | Concluída e validada |
-| 11 | Versão 3: `events-service` (JavaScript), `tickets-service` (TypeScript) e `logs-service` (Python), com três bancos (D29 a D36) | Concluída e validada: testes (Jest e pytest), contêineres (fluxos, concorrência, falhas do `events-service`, do `logs-service` e do RabbitMQ) e aplicação web no navegador |
-
-Atualize esta tabela ao concluir cada fase.
+| Versão | Arquitetura |
+|---|---|
+| 1 | `events-service` (Python/FastAPI) e `tickets-service` (TypeScript/NestJS), com reserva de vagas por HTTP; depois, API Gateway, Prometheus e Grafana, e RabbitMQ para cancelar os ingressos de eventos cancelados |
+| 2 | `events-tickets-service` (TypeScript/NestJS) e `logs-service` (Python/FastAPI), com registro de atividades pela outbox, histórico por HTTP e aplicação web |
+| 3 (atual) | `events-service` (JavaScript/NestJS), `tickets-service` (TypeScript/NestJS) e `logs-service` (Python/FastAPI), cada um com seu banco (D29 a D36) |
 
 ## Topologia
 
@@ -75,6 +63,32 @@ flowchart TB
 | `rabbitmq` | RabbitMQ 3.13 | Nenhuma | 5672, 15672 | Mensageria assíncrona: 3 exchanges e 3 filas |
 | `prometheus` | Prometheus 2.55 | Nenhuma | 9090 | Coleta e armazenamento de métricas |
 | `grafana` | Grafana 11.4 | Nenhuma | 3000 | Painéis de telemetria |
+
+## Modelo de dados
+
+Cada serviço cria as próprias tabelas ao subir (D8). Nenhuma tabela referencia outro banco.
+
+### `events_db` (`events-service`)
+
+| Tabela | Colunas |
+|---|---|
+| `events` | `id` (UUID), `title`, `description`, `category` (padrão `GENERAL`), `modality` (`IN_PERSON`, `ONLINE`, `HYBRID`), `location`, `start_at` e `end_at` (com fuso), `max_capacity` (> 0), `available_spots` (de 0 a `max_capacity`), `status` (`PUBLISHED`, `SOLD_OUT`, `CANCELLED`, `FINISHED`), `metadata_info` (JSONB livre), `created_at`, `updated_at` |
+| `spot_reservations` | `ticket_id` (UUID, chave primária), `event_id`, `status` (`RESERVED` ou `RELEASED`), `reserved_at`, `released_at`, `created_at`, `updated_at` (D30, D31) |
+| `outbox_messages` | `id` (= `message_id`), `exchange`, `routing_key`, `payload` (JSONB), `created_at`, `published_at` (D20, D34) |
+
+### `tickets_db` (`tickets-service`)
+
+| Tabela | Colunas |
+|---|---|
+| `tickets` | `id` (UUID gerado antes da reserva), `ticket_code` (único, `EVT-2026-XXXXXX`), `event_id` (sem chave estrangeira), `event_snapshot` (JSONB com título, categoria, modalidade, local e início), `participant_name`, `participant_email`, `participant_document`, `modality_tier` (padrão `STANDARD`), `status` (`CONFIRMED`, `CHECKED_IN`, `CANCELLED`), `created_at`, `updated_at`; índice único parcial em `(event_id, participant_document)` para status diferente de `CANCELLED` (D3) |
+| `closed_events` | `event_id` (UUID, chave primária), `reason` (`event_cancelled` ou `event_deleted`), `closed_at` (D32) |
+| `outbox_messages` | Mesma estrutura do `events_db` |
+
+### `logs_db` (`logs-service`)
+
+| Tabela | Colunas |
+|---|---|
+| `activity_logs` | `id` (UUID), `message_id` (único; nulo nos registros manuais), `source` (`events-service`, `tickets-service` ou `manual`), `action`, `entity_type`, `entity_id`, `level` (`INFO`, `WARNING`, `ERROR`), `message`, `data` (JSONB, sem dados pessoais), `correlation_id`, `occurred_at`, `status` (`NEW`, `REVIEWED`, `RESOLVED`), `notes`, `archived_at`, `created_at`, `updated_at` (D19) |
 
 ## Comunicação entre os serviços
 

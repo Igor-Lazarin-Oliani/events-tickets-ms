@@ -1,36 +1,36 @@
 # Decisões do projeto
 
-Decisões que refinam ou completam o [prompt.md](prompt.md). As marcadas como **provisórias** foram adotadas pelo agente onde a especificação era omissa e podem ser revistas pelo autor. Numere novas decisões em sequência e não reaproveite números.
+Decisões de projeto do `events-tickets-ms` e suas justificativas, numeradas em ordem cronológica. As que deixaram de valer continuam registradas e estão marcadas como substituídas.
 
 O projeto teve três topologias. Na versão 1, `events-service` (Python) e `tickets-service` (NestJS). Na versão 2 (D18), um único `events-tickets-service` (NestJS) e o `logs-service` (Python). Na **versão 3 (D29), a atual**, três microsserviços com três bancos: `events-service` (JavaScript/NestJS), `tickets-service` (TypeScript/NestJS) e `logs-service` (Python/FastAPI). As decisões das versões anteriores que deixaram de valer estão marcadas como substituídas e foram mantidas como histórico.
 
 ## D1 — Cancelamento é soft delete
 
-**Status:** confirmada pelo autor.
+**Status:** Em vigor.
 
 `DELETE /tickets/:id` muda o status para `CANCELLED` e mantém o registro. O histórico fica visível na demonstração, e repetir a operação responde `409`, sem devolver a vaga duas vezes.
 
 ## D2 — Mudança de capacidade preserva as vagas ocupadas
 
-**Status:** confirmada pelo autor. Substitui o cálculo proporcional da versão original do prompt.
+**Status:** Em vigor. Substitui o cálculo proporcional da versão original da especificação.
 
 `available_spots = nova capacidade - ocupadas`. Reduzir abaixo das ocupadas responde `409`. O cálculo proporcional deixaria as vagas inconsistentes com os ingressos: 100 vagas com 50 ocupadas, ao dobrar para 200, resultariam em 100 ocupadas para apenas 50 ingressos.
 
 ## D3 — Uma inscrição ativa por documento em cada evento
 
-**Status:** confirmada pelo autor.
+**Status:** Em vigor.
 
 Não pode haver dois ingressos não cancelados com o mesmo `participant_document` no mesmo evento. Quem cancelou pode se inscrever de novo. A garantia é um índice único parcial na tabela `tickets`, e a demonstração deve usar documentos diferentes.
 
 ## D4 — Testes automatizados das regras principais
 
-**Status:** confirmada pelo autor. Atualizada pela D29.
+**Status:** Em vigor. Atualizada pela D29.
 
 Jest no `events-service` (vagas, reserva idempotente, devolução, cancelamento e remoção de evento, outbox, consumidor da fila `events.spot-releases`, DTOs e documento OpenAPI) e no `tickets-service` (emissão com reserva remota e compensação, cancelamento, cascata, cliente HTTP do `events-service`, consumidor da fila `tickets.event-updates`, outbox e DTOs), e `pytest` no `logs-service` (CRUD, arquivamento e consumidor). As dependências de teste ficam fora das imagens de produção.
 
 ## D5 — Regras de transição e compensação de ingressos
 
-**Status:** provisória. Compensação substituída pela D18 e refeita na D30 e na D31.
+**Status:** Em vigor. Compensação substituída pela D18 e refeita na D30 e na D31.
 
 - O `PUT` não cancela ingressos, e o check-in só parte de `CONFIRMED`. *(continua valendo)*
 - ~~Falha do Serviço A na emissão responde `503`, sem criar ingresso.~~ Volta a valer na versão 3, com compensação idempotente (D30).
@@ -39,61 +39,61 @@ Jest no `events-service` (vagas, reserva idempotente, devolução, cancelamento 
 
 ## D6 — Exclusão de evento com ingressos ativos
 
-**Status:** provisória. **Substituída pela D22.**
+**Status:** **Substituída pela D22.**
 
 Era permitida, e os ingressos eram cancelados de forma assíncrona pela mensageria. Agora o cancelamento acontece na mesma transação da remoção.
 
 ## D7 — Correlação entre chamadas por cabeçalho
 
-**Status:** provisória. Atualizada pela D29.
+**Status:** Em vigor. Atualizada pela D29.
 
 O cabeçalho `X-Correlation-Id` liga os logs do gateway e dos três serviços. O `tickets-service` o repassa na reserva de vaga ao `events-service`; os dois o repassam na consulta de histórico ao `logs-service` e o gravam em cada mensagem publicada, inclusive nas mensagens trocadas entre eles. Quem consome uma mensagem continua com o mesmo identificador: os `ticket.cancelled` da cascata e o `event.spot_released` da devolução levam o identificador da operação que os causou. O `logs-service` guarda o valor no registro, o que permite filtrar `GET /logs?correlation_id=`.
 
 ## D8 — Sem ferramenta de migração
 
-**Status:** provisória.
+**Status:** Em vigor.
 
 As tabelas são criadas por `synchronize: true` (TypeORM) e `create_all` (SQLAlchemy). É adequado para um trabalho prático sem dados a preservar. Mudanças de modelo exigem `docker compose down -v`.
 
 ## D9 — `README.md` na raiz
 
-**Status:** provisória.
+**Status:** Em vigor.
 
-Toda a documentação fica em `docs/`, exceto o `README.md`, previsto na raiz pelo prompt e exibido pelo GitHub na página do repositório.
+Toda a documentação fica em `docs/`, exceto o `README.md`, previsto na raiz pela especificação e exibido pelo GitHub na página do repositório.
 
 ## D10 — Datas com fuso e `PUT` parcial em eventos
 
-**Status:** provisória.
+**Status:** Em vigor.
 
 `start_at` e `end_at` exigem fuso horário, para que uma data ambígua não seja gravada em horário errado. O `PUT /events/{id}` altera apenas os campos enviados; `null` só é aceito em `description` e `metadata_info`.
 
 ## D11 — Evento esgotado responde `409`, e não `400`
 
-**Status:** provisória. Corrige a ordem das validações da versão original do prompt. Atualizada pela D25: o fim do evento é verificado antes de tudo.
+**Status:** Em vigor. Corrige a ordem das validações da versão original da especificação. Atualizada pela D25: o fim do evento é verificado antes de tudo.
 
 Um evento esgotado tem status `SOLD_OUT`. Na ordem original, ele cairia na regra `status !== PUBLISHED` e responderia `400`, mas o roteiro da demonstração exige `409 Event is sold out` no terceiro ingresso. Por isso, `SOLD_OUT` é verificado antes; `CANCELLED` e `FINISHED` continuam respondendo `400`.
 
 ## D12 — `PUT /tickets/:id` parcial e estrito
 
-**Status:** provisória.
+**Status:** Em vigor.
 
 O `PUT` altera apenas os campos enviados e recusa com `400` campos desconhecidos, `event_id`, `null` e qualquer `status` diferente de `CHECKED_IN`. O `ValidationPipe` global usa `forbidNonWhitelisted`, então o mesmo vale para os outros corpos e filtros do `events-tickets-service`.
 
 ## D13 — API Gateway NGINX como única porta de entrada
 
-**Status:** confirmada pelo autor. Atualizada pela D29.
+**Status:** Em vigor. Atualizada pela D29.
 
 O edital pontua o gateway. O `api-gateway` publica a porta `8080`; serviços e bancos ficam acessíveis só na rede interna. O NGINX usa lista de rotas permitidas, e qualquer caminho fora dela responde `404`. Na versão 3, a rota interna `PATCH /events/{id}/reserve-spot` voltou a existir e fica fora da lista: só o `tickets-service` a chama, pela rede interna (D30). A devolução de vaga não tem rota; chega pelo RabbitMQ (D31).
 
 ## D14 — Swagger, saúde e métricas sob caminhos do gateway
 
-**Status:** confirmada pelo autor. Caminhos atualizados pela D29.
+**Status:** Em vigor. Caminhos atualizados pela D29.
 
 Os três serviços têm `/docs`, `/health` e `/metrics`, que colidiriam em uma única porta. O Swagger é servido em `/docs/events`, `/docs/tickets` e `/docs/logs`, diretamente pelos serviços, sem reescrita de URL, o que mantém o "Try it out" funcionando pelo gateway. Saúde e métricas são publicadas em `/health/{events,tickets,logs}` e `/metrics/{events,tickets,logs}`.
 
 ## D15 — Prometheus e Grafana provisionados e atrás do gateway
 
-**Status:** confirmada pelo autor (uso das ferramentas). O acesso pelo gateway e o modo anônimo são provisórios.
+**Status:** Em vigor.
 
 O edital pede coleta por ferramentas especializadas. O Prometheus coleta `/metrics` dos três serviços a cada 5 s, pela rede interna, e o Grafana já sobe com fonte de dados e painel definidos em arquivos, sem passo manual. Os dois são acessados por `/prometheus/` e `/grafana/`, mantendo a porta única da D13. O Grafana abre sem login, somente leitura, para simplificar a demonstração; editar exige `admin`/`admin`, credencial exclusiva do ambiente local.
 
@@ -101,19 +101,19 @@ O `logs-service` é um serviço de domínio (registro de atividades), e não sub
 
 ## D16 — Mensageria com RabbitMQ e outbox
 
-**Status:** confirmada pelo autor (uso do RabbitMQ). **Destino e conteúdo substituídos pela D20; na versão 3, a outbox volta a levar mensagens entre eventos e ingressos (D31, D33).**
+**Status:** Em vigor. **Destino e conteúdo substituídos pela D20; na versão 3, a outbox volta a levar mensagens entre eventos e ingressos (D31, D33).**
 
 A outbox continua: a mensagem é gravada na mesma transação da mudança e publicada depois, com publisher confirms. O que mudou é o que se publica e quem consome: antes, só `event.cancelled` e `event.deleted`, consumidas pelo antigo `tickets-service`; agora, toda atividade de eventos e ingressos, consumida pelo `logs-service`.
 
 ## D17 — Evento cancelado não pode ser reaberto
 
-**Status:** provisória.
+**Status:** Em vigor.
 
 `CANCELLED` passa a ser um estado final: mudar para outro status responde `409`. Se o evento pudesse ser reaberto, os ingressos cancelados junto com ele deixariam vagas presas, já que o cancelamento em cascata não devolve vagas.
 
 ## D18 — Eventos e ingressos em um único microsserviço
 
-**Status:** confirmada pelo autor na versão 2. **Substituída pela D29** (versão 3). Substituiu a topologia `events-service` + `tickets-service` da versão 1.
+**Status:** Adotada na versão 2. **Substituída pela D29** (versão 3). Substituiu a topologia `events-service` + `tickets-service` da versão 1.
 
 O antigo `events-service` (Python) e o antigo `tickets-service` (NestJS) viraram um único `events-tickets-service`, em **Node.js 20 + NestJS + TypeORM**, com o banco `events-tickets-db` (tabelas `events`, `tickets` e `outbox_messages`). O segundo microsserviço passou a ser o `logs-service`, em **Python 3.11 + FastAPI + SQLAlchemy**, com o banco `logs-db`.
 
@@ -128,7 +128,7 @@ Consequências:
 
 ## D19 — CRUD do `logs-service`: fatos imutáveis, triagem editável e arquivamento
 
-**Status:** confirmada pelo autor (CRUD completo e `DELETE` como arquivamento). Os campos editáveis são provisórios.
+**Status:** Em vigor.
 
 Um registro de atividade descreve algo que já aconteceu, então o conteúdo não pode ser reescrito. O CRUD fica assim:
 
@@ -141,7 +141,7 @@ O arquivamento, em vez da exclusão física, mantém o `message_id` no banco. As
 
 ## D20 — Toda mudança gera um registro de atividade pela outbox
 
-**Status:** provisória (contrato das mensagens). O uso de RabbitMQ e outbox segue a D16. O desempenho do publicador foi revisto na D28. **Atualizada pela D29 e pela D34:** na versão 3, o `events-service` e o `tickets-service` publicam as atividades, cada um da sua outbox, na exchange `activities.exchange` (antes `events-tickets.exchange`), e `source` é o nome de quem publicou.
+**Status:** Em vigor. O uso de RabbitMQ e outbox segue a D16. O desempenho do publicador foi revisto na D28. **Atualizada pela D29 e pela D34:** na versão 3, o `events-service` e o `tickets-service` publicam as atividades, cada um da sua outbox, na exchange `activities.exchange` (antes `events-tickets.exchange`), e `source` é o nome de quem publicou.
 
 Cada operação que altera eventos ou ingressos grava, na mesma transação, uma ou mais mensagens em `outbox_messages`. O publicador do serviço as envia a cada segundo para a exchange de atividades (topic), com a ação como routing key: `event.created`, `event.updated`, `event.cancelled`, `event.deleted`, `event.spot_reserved`, `event.spot_released`, `ticket.issued`, `ticket.updated`, `ticket.checked_in` e `ticket.cancelled`. O `logs-service` consome a fila `logs.activity`, ligada a `event.*` e `ticket.*`.
 
@@ -152,13 +152,13 @@ Cada operação que altera eventos ou ingressos grava, na mesma transação, uma
 
 ## D21 — Histórico consultado por HTTP síncrono
 
-**Status:** confirmada pelo autor. Na versão 3, o `events-service` atende o histórico de eventos, e o `tickets-service`, o de ingressos (D29).
+**Status:** Em vigor. Na versão 3, o `events-service` atende o histórico de eventos, e o `tickets-service`, o de ingressos (D29).
 
 `GET /events/{id}/history` e `GET /tickets/{id}/history` (UUID ou `ticket_code`) verificam que a entidade existe e chamam `GET /logs?entity_type=&entity_id=&order=asc` no `logs-service`, com timeout de 3 s e o `X-Correlation-Id` repassado. Se o `logs-service` estiver fora do ar ou demorar, só essas rotas respondem `503 Logs service unavailable`; emissão, cancelamento e o resto da API continuam funcionando. O histórico de um evento removido continua disponível diretamente em `GET /logs?entity_type=event&entity_id=`.
 
 ## D22 — Cancelar ou remover evento cancela os ingressos na mesma transação
 
-**Status:** confirmada pelo autor na versão 2. **Substituída pela D33** (versão 3): com eventos e ingressos em bancos diferentes, o cancelamento em cascata voltou a ser assíncrono. Substituiu a D6 e o cancelamento assíncrono da D16.
+**Status:** Adotada na versão 2. **Substituída pela D33** (versão 3): com eventos e ingressos em bancos diferentes, o cancelamento em cascata voltou a ser assíncrono. Substituiu a D6 e o cancelamento assíncrono da D16.
 
 `PUT /events/{id}` com `status: CANCELLED` e `DELETE /events/{id}` travam a linha do evento (`SELECT ... FOR UPDATE`), cancelam os ingressos ativos com um único `UPDATE ... RETURNING` e gravam as mensagens, tudo na mesma transação. Para o cliente, o comportamento é o mesmo de antes, mas sem atraso: a resposta já sai com os ingressos cancelados. As vagas não são devolvidas, porque o evento não aceita mais inscrições. Os ingressos mantêm o `event_snapshot`.
 
@@ -166,13 +166,13 @@ Travar o evento antes de cancelar os ingressos fecha a janela de corrida que exi
 
 ## D23 — Erros de validação respondem `400` nos serviços NestJS
 
-**Status:** provisória. Atualizada pela D29.
+**Status:** Em vigor. Atualizada pela D29.
 
 Com a D18, as rotas de eventos passaram do FastAPI para o NestJS, cujo `ValidationPipe` responde `400`. Na versão 3, os dois serviços NestJS mantêm a regra: o `events-service` e o `tickets-service` usam `400` para corpo inválido, UUID inválido, data sem fuso e fim antes do início. O `logs-service`, em FastAPI, mantém `422` para dados inválidos.
 
 ## D24 — Aplicação web estática servida pelo `api-gateway`
 
-**Status:** confirmada pelo autor.
+**Status:** Em vigor.
 
 O edital pede uma "aplicação web", e o Swagger mostra as rotas, mas não a comunicação entre os componentes. A aplicação fica em `frontend/`: HTML, CSS e JavaScript puros, sem framework, build ou CDN. O `api-gateway` serve os arquivos em `/app/`, e `/` redireciona para lá.
 
@@ -184,7 +184,7 @@ O edital pede uma "aplicação web", e o Swagger mostra as rotas, mas não a com
 
 ## D25 — Evento encerrado não aceita inscrições
 
-**Status:** confirmada pelo autor (regra). O código `400` e as mensagens são provisórios.
+**Status:** Em vigor.
 
 Não é possível se inscrever em evento inexistente nem em evento cujo `end_at` já passou, mesmo que ainda haja vagas e o status continue `PUBLISHED`. Antes, só o status `FINISHED`, alterado à mão, fechava um evento que já tinha acontecido.
 
@@ -197,7 +197,7 @@ Não é possível se inscrever em evento inexistente nem em evento cujo `end_at`
 
 ## D26 — Listagens e históricos paginados, com o total
 
-**Status:** provisória. Corrige listagens que devolviam a tabela inteira e o histórico cortado sem aviso.
+**Status:** Em vigor. Corrige listagens que devolviam a tabela inteira e o histórico cortado sem aviso.
 
 - `GET /events` e `GET /tickets` aceitam `limit` (1 a 500, padrão 100) e `offset`, com os mesmos limites do `GET /logs`, e ordenam por `created_at` decrescente, com o `id` como desempate, para as páginas não repetirem itens.
 - As três listagens (`/events`, `/tickets` e `/logs`) devolvem o total que atende aos filtros no cabeçalho `X-Total-Count`. O corpo continua sendo uma lista, então quem já consumia as rotas não precisa mudar.
@@ -206,14 +206,14 @@ Não é possível se inscrever em evento inexistente nem em evento cujo `end_at`
 
 ## D27 — Reinício automático e subida sem depender do `logs-service`
 
-**Status:** provisória. Reforça a D21: o `logs-service` nunca bloqueia a venda. Atualizada pela D36.
+**Status:** Em vigor. Reforça a D21: o `logs-service` nunca bloqueia a venda. Atualizada pela D36.
 
 - Os contêineres usam `restart: unless-stopped`. Um processo que cai volta sozinho; um `docker compose stop` mantém o contêiner parado, então os experimentos de falha continuam iguais. Contêineres em execução também voltam quando o Docker reinicia, por isso o ambiente deve ser encerrado com `docker compose down`.
 - O `api-gateway` e o `prometheus` dependem só dos serviços de venda saudáveis: na versão 3, o `events-service` e o `tickets-service` (D36). Antes, também esperavam o `logs-service`, e uma falha dele na subida deixava o sistema inteiro sem porta de entrada. O NGINX resolve os nomes a cada requisição (D13), então passa a encaminhar para o `logs-service` assim que ele sobe, e o Prometheus o mostra como `DOWN` enquanto isso.
 
 ## D28 — Publicador da outbox sem gargalo
 
-**Status:** provisória. Complementa a D20. Atualizada pela D34: o lote marca como publicadas só as mensagens que o broker não devolveu.
+**Status:** Em vigor. Complementa a D20. Atualizada pela D34: o lote marca como publicadas só as mensagens que o broker não devolveu.
 
 - **Lotes em sequência:** o publicador lê até 50 mensagens por vez. Se o lote vier cheio, o próximo sai em seguida, sem esperar o intervalo de 1 s. Antes, a vazão máxima era de 50 mensagens por segundo, e remover um evento com 300 ingressos, ou recuperar o acúmulo depois de uma queda do RabbitMQ, demorava vários segundos.
 - **Conexão fora da transação:** o publicador conecta ao broker antes de abrir a transação que trava as mensagens (`FOR UPDATE SKIP LOCKED`). Com o broker fora do ar, a tentativa de conexão (até 3 s) não segura uma conexão do banco nem linhas travadas. Só o envio do lote e a espera pela confirmação acontecem com a transação aberta, porque a mensagem só pode ser marcada como publicada depois da confirmação.
@@ -222,7 +222,7 @@ Não é possível se inscrever em evento inexistente nem em evento cujo `end_at`
 
 ## D29 — Três microsserviços e três bancos
 
-**Status:** confirmada pelo autor. Substitui a D18.
+**Status:** Em vigor. Substitui a D18.
 
 A versão 3 separa de novo eventos e ingressos e mantém o registro de atividades:
 
@@ -243,7 +243,7 @@ Consequências:
 
 ## D30 — Reserva de vaga por HTTP síncrono e idempotente, com compensação
 
-**Status:** confirmada pelo autor (HTTP síncrono idempotente com compensação). Os detalhes de implementação são provisórios.
+**Status:** Em vigor.
 
 O cliente precisa saber na hora se conseguiu o ingresso, então a reserva é síncrona. O `tickets-service`:
 
@@ -264,7 +264,7 @@ O `tickets-service` não depende do `events-service` para subir: consultas, chec
 
 ## D31 — Devolução de vaga assíncrona pela outbox
 
-**Status:** confirmada pelo autor.
+**Status:** Em vigor.
 
 `DELETE /tickets/{id}` muda o ingresso para `CANCELLED` e grava, na mesma transação do `tickets-db`, a atividade `ticket.cancelled` e o pedido `spot.release_requested` (`reason: ticket_cancelled`), publicado em `tickets.exchange` e consumido pelo `events-service` na fila `events.spot-releases`. A resposta não espera a devolução, e a vaga volta ao evento cerca de 1 s depois.
 
@@ -278,7 +278,7 @@ Justificativa: a devolução não precisa de resposta, precisa acontecer. Gravad
 
 ## D32 — Eventos encerrados registrados no tickets-service, com lock consultivo
 
-**Status:** provisória.
+**Status:** Em vigor.
 
 Com a cascata assíncrona (D33), existe uma janela: uma emissão que reservou a vaga antes do cancelamento do evento pode salvar o ingresso depois de o `tickets-service` ter cancelado os outros, e o ingresso ficaria `CONFIRMED` em um evento cancelado.
 
@@ -288,7 +288,7 @@ A tabela também serve de recusa rápida: uma inscrição em evento já conhecid
 
 ## D33 — Cancelar ou remover evento cancela os ingressos de forma assíncrona
 
-**Status:** confirmada pelo autor. Substitui a D22.
+**Status:** Em vigor. Substitui a D22.
 
 `PUT /events/{id}` com `status: CANCELLED` e `DELETE /events/{id}` travam o evento (`SELECT ... FOR UPDATE`), aplicam a mudança e gravam, na mesma transação do `events-db`, a atividade (`event.cancelled` ou `event.deleted`) e um aviso com o mesmo nome em `events.exchange`. O `tickets-service` consome a fila `tickets.event-updates` e, em uma transação com o lock da D32, registra o evento em `closed_events`, cancela os ingressos ativos com um único `UPDATE ... RETURNING` e grava um `ticket.cancelled` por ingresso, com `reason` `event_cancelled` ou `event_deleted`.
 
@@ -299,7 +299,7 @@ A tabela também serve de recusa rápida: uma inscrição em evento já conhecid
 
 ## D34 — Uma exchange por finalidade e publicação mensagem a mensagem
 
-**Status:** provisória. Complementa a D20 e a D28.
+**Status:** Em vigor. Complementa a D20 e a D28.
 
 | Exchange (topic) | Quem publica | Routing keys | Fila e consumidor |
 |---|---|---|---|
@@ -315,7 +315,7 @@ O lote marca como publicadas só as mensagens que o broker confirmou e não devo
 
 ## D35 — events-service em JavaScript com NestJS e TypeORM
 
-**Status:** confirmada pelo autor (linguagem e stack). Os detalhes de implementação são provisórios.
+**Status:** Em vigor.
 
 NestJS e TypeORM nasceram para TypeScript, que fornece decorators e metadados de tipo. Em JavaScript:
 
@@ -328,7 +328,7 @@ NestJS e TypeORM nasceram para TypeScript, que fornece decorators e metadados de
 
 ## D36 — Portas, caminhos e ordem de subida da versão 3
 
-**Status:** provisória.
+**Status:** Em vigor.
 
 - Portas internas: `events-service` em `3001`, `tickets-service` em `3002` e `logs-service` em `8000`. Só o `api-gateway` publica porta no host (`8080`).
 - Caminhos públicos (D14): `/docs/{events,tickets,logs}`, `/health/{events,tickets,logs}` e `/metrics/{events,tickets,logs}`; jobs do Prometheus `events-service`, `tickets-service` e `logs-service`.
