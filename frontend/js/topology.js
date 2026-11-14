@@ -2,65 +2,80 @@
 // quem recebeu a evidência (resposta HTTP, registro no logs-service, contador do RabbitMQ).
 import { s, sleep } from './util.js';
 
-const VIEW_W = 1040;
-const VIEW_H = 382;
+const VIEW_W = 1160;
+const VIEW_H = 515;
 const NODE_H = 64;
-const ROW = [40, 190, 340];
 
 export const NODES = {
   browser: {
-    x: 72, y: ROW[1], w: 130, title: 'Navegador', sub: 'aplicação web',
+    x: 72, y: 265, w: 124, title: 'Navegador', sub: 'aplicação web',
     tip: 'Esta página. Toda chamada sai daqui e entra pela única porta publicada, a 8080 do api-gateway.',
   },
   gateway: {
-    x: 255, y: ROW[1], w: 150, title: 'api-gateway', sub: 'NGINX · :8080',
+    x: 250, y: 265, w: 140, title: 'api-gateway', sub: 'NGINX · :8080',
     tip: 'Única entrada do sistema. Encaminha só as rotas permitidas, esconde a topologia e propaga o X-Correlation-Id.',
   },
-  core: {
-    x: 495, y: ROW[0], w: 220, title: 'events-tickets-service', sub: 'NestJS · TypeScript',
-    tip: 'Eventos, vagas, ingressos e check-in. Cada mudança e suas atividades são gravadas na mesma transação (outbox).',
+  events: {
+    x: 520, y: 85, w: 210, title: 'events-service', sub: 'NestJS · JavaScript',
+    tip: 'Eventos e vagas. Reserva a vaga por HTTP, devolve ao consumir a fila events.spot-releases e avisa o tickets-service quando um evento é cancelado.',
   },
-  coredb: {
-    x: 775, y: ROW[0], w: 180, db: true, title: 'events-tickets-db', sub: 'PostgreSQL 16',
-    tip: 'Banco exclusivo do events-tickets-service: eventos, ingressos e a tabela outbox_messages.',
-  },
-  rabbitmq: {
-    x: 700, y: ROW[1], w: 180, title: 'rabbitmq', sub: 'fila logs.activity',
-    tip: 'Broker de mensagens. A outbox publica no exchange events-tickets.exchange, e a fila logs.activity entrega ao logs-service.',
+  tickets: {
+    x: 520, y: 265, w: 210, title: 'tickets-service', sub: 'NestJS · TypeScript',
+    tip: 'Inscrições, ingressos e check-in. Reserva a vaga no events-service antes de salvar o ingresso e pede a devolução pela outbox.',
   },
   logs: {
-    x: 495, y: ROW[2], w: 220, title: 'logs-service', sub: 'FastAPI · Python',
-    tip: 'Registro de atividades: consome a fila, grava cada mensagem uma única vez e oferece o CRUD de triagem.',
+    x: 520, y: 445, w: 210, title: 'logs-service', sub: 'FastAPI · Python',
+    tip: 'Registro de atividades: consome a fila logs.activity, grava cada mensagem uma única vez e oferece o CRUD de triagem.',
+  },
+  rabbitmq: {
+    x: 780, y: 175, w: 170, title: 'rabbitmq', sub: '3 filas',
+    tip: 'Broker de mensagens. Filas logs.activity (atividades), tickets.event-updates (eventos cancelados) e events.spot-releases (devolução de vagas).',
+  },
+  eventsdb: {
+    x: 1030, y: 85, w: 180, db: true, title: 'events-db', sub: 'PostgreSQL 16',
+    tip: 'Banco exclusivo do events-service: eventos, reservas de vaga por ingresso e a outbox.',
+  },
+  ticketsdb: {
+    x: 1030, y: 265, w: 180, db: true, title: 'tickets-db', sub: 'PostgreSQL 16',
+    tip: 'Banco exclusivo do tickets-service: ingressos, eventos encerrados e a outbox.',
   },
   logsdb: {
-    x: 775, y: ROW[2], w: 180, db: true, title: 'logs-db', sub: 'PostgreSQL 16',
+    x: 1030, y: 445, w: 180, db: true, title: 'logs-db', sub: 'PostgreSQL 16',
     tip: 'Banco exclusivo do logs-service: a tabela activity_logs.',
   },
   prometheus: {
-    x: 958, y: ROW[1], w: 150, title: 'prometheus', sub: 'métricas',
-    tip: 'Coleta /metrics dos dois serviços a cada 5 s.',
+    x: 780, y: 360, w: 170, title: 'prometheus', sub: 'métricas',
+    tip: 'Coleta /metrics dos três serviços a cada 5 s.',
   },
   grafana: {
-    x: 958, y: ROW[2], w: 150, title: 'grafana', sub: 'painéis',
+    x: 1030, y: 360, w: 180, title: 'grafana', sub: 'painéis',
     tip: 'Painel provisionado, que consulta o Prometheus com PromQL.',
   },
 };
 
+// via: pontos intermediários, para a linha contornar os nós. labelAt: posição do rótulo.
 const EDGES = [
-  { from: 'browser', to: 'gateway', kind: 'http', label: ':8080', dy: -8 },
-  { from: 'gateway', to: 'core', kind: 'http', label: 'HTTP', dx: -16 },
-  { from: 'gateway', to: 'logs', kind: 'http', label: 'HTTP', dx: -16 },
-  { from: 'core', to: 'coredb', kind: 'sql', label: 'SQL', dy: -8 },
-  { from: 'logs', to: 'logsdb', kind: 'sql', label: 'SQL', dy: -8 },
-  { from: 'core', to: 'rabbitmq', kind: 'amqp', label: 'AMQP · publica (outbox)', dx: 52 },
-  { from: 'rabbitmq', to: 'logs', kind: 'amqp', label: 'AMQP · consome', dx: 40 },
-  { from: 'core', to: 'logs', kind: 'rest', label: 'REST · histórico' },
-  { from: 'prometheus', to: 'core', kind: 'scrape', label: 'coleta /metrics', t: 0.24, dy: -6 },
-  { from: 'prometheus', to: 'logs', kind: 'scrape', label: 'coleta /metrics', t: 0.24, dy: 14 },
-  { from: 'grafana', to: 'prometheus', kind: 'scrape', label: 'PromQL' },
+  { from: 'browser', to: 'gateway', kind: 'http', label: ':8080', labelAt: [156, 257] },
+  { from: 'gateway', to: 'events', kind: 'http', via: [[345, 265], [345, 85]] },
+  { from: 'gateway', to: 'tickets', kind: 'http', label: 'HTTP', labelAt: [367, 257] },
+  { from: 'gateway', to: 'logs', kind: 'http', via: [[345, 265], [345, 445]] },
+  { from: 'events', to: 'eventsdb', kind: 'sql', label: 'SQL', labelAt: [880, 77] },
+  { from: 'tickets', to: 'ticketsdb', kind: 'sql', label: 'SQL', labelAt: [880, 257] },
+  { from: 'logs', to: 'logsdb', kind: 'sql', label: 'SQL', labelAt: [880, 437] },
+  { from: 'tickets', to: 'events', kind: 'rest', label: 'REST · reserva', labelAt: [474, 179] },
+  { from: 'tickets', to: 'logs', kind: 'rest', label: 'REST · histórico', labelAt: [470, 359] },
+  { from: 'events', to: 'logs', kind: 'rest', via: [[390, 105], [390, 425]], label: 'REST', labelAt: [367, 352] },
+  { from: 'events', to: 'rabbitmq', kind: 'amqp', label: 'AMQP', labelAt: [672, 120] },
+  { from: 'tickets', to: 'rabbitmq', kind: 'amqp', label: 'AMQP', labelAt: [706, 224] },
+  { from: 'rabbitmq', to: 'logs', kind: 'amqp', label: 'AMQP', labelAt: [706, 292] },
+  { from: 'prometheus', to: 'events', kind: 'scrape' },
+  { from: 'prometheus', to: 'tickets', kind: 'scrape' },
+  { from: 'prometheus', to: 'logs', kind: 'scrape', label: 'coleta /metrics', labelAt: [668, 427] },
+  { from: 'grafana', to: 'prometheus', kind: 'scrape', label: 'PromQL', labelAt: [905, 352] },
 ];
 
 const nodeEls = {};
+// Cada aresta é guardada nos dois sentidos, com os pontos na ordem do percurso.
 const edgeEls = new Map();
 const litCount = new Map();
 let packetLayer;
@@ -75,19 +90,17 @@ export function initTopology(svg) {
   for (const edge of EDGES) {
     const a = NODES[edge.from];
     const b = NODES[edge.to];
+    const points = [[a.x, a.y], ...(edge.via ?? []), [b.x, b.y]];
     const g = s('g', { class: `edge ${edge.kind}` },
-      s('line', { class: 'wire', x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
+      s('polyline', { class: 'wire', fill: 'none', points: points.map((p) => p.join(',')).join(' ') }));
     edgeLayer.append(g);
-    edgeEls.set(`${edge.from}>${edge.to}`, g);
-    edgeEls.set(`${edge.to}>${edge.from}`, g);
+    edgeEls.set(`${edge.from}>${edge.to}`, { g, points });
+    edgeEls.set(`${edge.to}>${edge.from}`, { g, points: [...points].reverse() });
 
-    const t = edge.t ?? 0.5;
-    labelLayer.append(s('text', {
-      class: 'edge-label',
-      x: a.x + (b.x - a.x) * t + (edge.dx ?? 0),
-      y: a.y + (b.y - a.y) * t + (edge.dy ?? 4),
-      'text-anchor': 'middle',
-    }, edge.label));
+    if (edge.label) {
+      const [x, y] = edge.labelAt;
+      labelLayer.append(s('text', { class: 'edge-label', x, y, 'text-anchor': 'middle' }, edge.label));
+    }
   }
 
   for (const [id, node] of Object.entries(NODES)) {
@@ -155,7 +168,7 @@ export function setBadge(id, text) {
 }
 
 export function setEdgeBroken(from, to, broken) {
-  edgeEls.get(`${from}>${to}`)?.classList.toggle('broken', broken);
+  edgeEls.get(`${from}>${to}`)?.g.classList.toggle('broken', broken);
 }
 
 function light(edge, kind, delta) {
@@ -185,35 +198,50 @@ function failMark(x, y) {
 
 const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 
+/** Ponto a uma distância do início do percurso, segmento a segmento. */
+function pointAt(points, lengths, distance) {
+  let rest = distance;
+  for (let i = 0; i < lengths.length; i++) {
+    if (rest <= lengths[i] || i === lengths.length - 1) {
+      const f = lengths[i] ? Math.min(1, rest / lengths[i]) : 1;
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[i + 1];
+      return [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f];
+    }
+    rest -= lengths[i];
+  }
+  return points[points.length - 1];
+}
+
 /** Um pacote indo de um nó a outro. abortAt (0 a 1) para o pacote no meio do caminho, com um ✕. */
 export function hop(from, to, kind, { scale = 1, abortAt = null, radius = 6.5 } = {}) {
   if (document.hidden) return Promise.resolve();
-  const a = NODES[from];
-  const b = NODES[to];
-  const edge = edgeEls.get(`${from}>${to}`);
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const duration = (240 + Math.hypot(dx, dy) * 0.8) * scale;
+  const entry = edgeEls.get(`${from}>${to}`);
+  const points = entry?.points ?? [[NODES[from].x, NODES[from].y], [NODES[to].x, NODES[to].y]];
+  const lengths = points.slice(1).map(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]));
+  const total = lengths.reduce((sum, length) => sum + length, 0);
+  const duration = (240 + total * 0.8) * scale;
   const end = abortAt ?? 1;
-  const dot = s('circle', { class: `packet ${kind}`, r: radius, cx: a.x, cy: a.y });
+  const [startX, startY] = points[0];
+  const dot = s('circle', { class: `packet ${kind}`, r: radius, cx: startX, cy: startY });
   packetLayer.append(dot);
-  light(edge, kind, +1);
+  light(entry?.g, kind, +1);
 
   return new Promise((resolve) => {
     const startedAt = performance.now();
     const frame = (now) => {
       const t = Math.min(1, (now - startedAt) / duration);
-      const p = ease(t) * end;
-      dot.setAttribute('cx', String(a.x + dx * p));
-      dot.setAttribute('cy', String(a.y + dy * p));
+      const [x, y] = pointAt(points, lengths, ease(t) * end * total);
+      dot.setAttribute('cx', String(x));
+      dot.setAttribute('cy', String(y));
       if (t < 1) {
         requestAnimationFrame(frame);
         return;
       }
       dot.remove();
-      light(edge, kind, -1);
+      light(entry?.g, kind, -1);
       if (abortAt !== null) {
-        failMark(a.x + dx * end, a.y + dy * end);
+        failMark(x, y);
       } else {
         pulse(to, kind);
       }
@@ -229,26 +257,47 @@ async function walk(path, kinds, opts) {
   }
 }
 
-// Desvios que o serviço faz antes de responder, como ir ao banco ou consultar o logs-service.
+/** Tipo de cada salto de um caminho assíncrono: SQL até um banco, AMQP de ou para o broker. */
+function kindOf(from, to) {
+  if (to.endsWith('db') || from.endsWith('db')) return 'sql';
+  return 'amqp';
+}
+
+const db = (service) => ({ path: [service, `${service}db`], kinds: ['sql'] });
+const RESERVE = { path: ['tickets', 'events', 'eventsdb'], kinds: ['rest', 'sql'] };
+
+/** Mensagem de erro dos serviços NestJS (texto) ou FastAPI (detail). */
+const messageOf = (r) => (typeof r.data?.message === 'string' ? r.data.message : r.data?.detail);
+
+function historyPlan(service) {
+  return (r) => {
+    if (r.status === 400) return [];
+    if (r.status === 404) return [db(service)];
+    if (r.status === 503) return [db(service), { path: [service, 'logs'], kinds: ['rest'], fail: true }];
+    return [db(service), { path: [service, 'logs', 'logsdb'], kinds: ['rest', 'sql'] }];
+  };
+}
+
+// Desvios que o serviço faz antes de responder: ir ao banco, reservar a vaga, consultar o logs-service.
 const ROUTES = {
-  core: {
-    entry: 'core',
-    plan: (r) => (r.status === 400 ? [] : [{ path: ['core', 'coredb'], kinds: ['sql'] }]),
-  },
-  history: {
-    entry: 'core',
+  events: { entry: 'events', plan: (r) => (r.status === 400 ? [] : [db('events')]) },
+  tickets: { entry: 'tickets', plan: (r) => (r.status === 400 ? [] : [db('tickets')]) },
+  logs: { entry: 'logs', plan: (r) => (r.status === 422 ? [] : [db('logs')]) },
+  issue: {
+    entry: 'tickets',
     plan: (r) => {
-      if (r.status === 400) return [];
-      const db = { path: ['core', 'coredb'], kinds: ['sql'] };
-      if (r.status === 404) return [db];
-      if (r.status === 503) return [db, { path: ['core', 'logs'], kinds: ['rest'], fail: true }];
-      return [db, { path: ['core', 'logs', 'logsdb'], kinds: ['rest', 'sql'] }];
+      const message = messageOf(r);
+      if (r.status === 400 && Array.isArray(r.data?.message)) return [];
+      if (r.status === 409 && message === 'Participant already registered for this event') return [db('tickets')];
+      if (r.status === 503 && message === 'Events service unavailable') {
+        return [db('tickets'), { path: ['tickets', 'events'], kinds: ['rest'], fail: true }];
+      }
+      if (r.ok) return [db('tickets'), RESERVE, db('tickets')];
+      return [db('tickets'), RESERVE];
     },
   },
-  logs: {
-    entry: 'logs',
-    plan: (r) => (r.status === 422 ? [] : [{ path: ['logs', 'logsdb'], kinds: ['sql'] }]),
-  },
+  eventHistory: { entry: 'events', plan: historyPlan('events') },
+  ticketHistory: { entry: 'tickets', plan: historyPlan('tickets') },
 };
 
 function resultKind(result) {
@@ -294,23 +343,24 @@ export async function animateCall(routeName, resultPromise, { light: isRead = fa
   return result;
 }
 
-/** Caminho assíncrono, a partir da outbox ou de mensagens que já estavam na fila. */
-export async function animateAsync(fromPhase, count = 1) {
-  const packets = Math.max(1, Math.min(count, 4));
-  await Promise.all(Array.from({ length: packets }, async (_, i) => {
+/**
+ * Caminhos assíncronos já comprovados pelos registros no logs-service. Cada caminho é uma lista de
+ * nós, como ['tickets', 'rabbitmq', 'events', 'eventsdb', 'events', 'rabbitmq', 'logs', 'logsdb'].
+ */
+export async function animateAsync(paths) {
+  await Promise.all(paths.slice(0, 4).map(async (path, i) => {
     await sleep(i * 150);
-    if (fromPhase === 'outbox') await hop('core', 'rabbitmq', 'amqp');
-    await hop('rabbitmq', 'logs', 'amqp');
-    await hop('logs', 'logsdb', 'sql');
+    for (let j = 0; j < path.length - 1; j++) {
+      await hop(path[j], path[j + 1], kindOf(path[j], path[j + 1]));
+    }
   }));
 }
 
 /** Mensagens publicadas que ficaram paradas na fila, sem consumidor. */
-export async function animatePublish(count = 1) {
-  const packets = Math.max(1, Math.min(count, 4));
-  await Promise.all(Array.from({ length: packets }, async (_, i) => {
+export async function animatePublish(origins) {
+  await Promise.all(origins.slice(0, 4).map(async (origin, i) => {
     await sleep(i * 150);
-    await hop('core', 'rabbitmq', 'amqp');
+    await hop(origin, 'rabbitmq', 'amqp');
   }));
 }
 

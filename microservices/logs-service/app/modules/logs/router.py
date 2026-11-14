@@ -12,7 +12,7 @@ from app.modules.logs.service import LogService
 
 router = APIRouter(prefix="/logs", tags=["Logs (Registro de atividades)"])
 
-# Total sem paginação; o events-tickets-service o repassa como "total" no histórico.
+# Total sem paginação; o events-service e o tickets-service o repassam como "total" no histórico.
 TOTAL_COUNT_HEADER = "X-Total-Count"
 
 LOG_ID = Path(
@@ -60,8 +60,8 @@ def create_log(payload: LogCreate, service: LogService = Depends(get_log_service
     description=(
         "Lista os registros com filtros opcionais. Os arquivados ficam de fora, a menos que "
         "`include_archived=true`. A lista é paginada com `limit` e `offset`, e o cabeçalho "
-        "`X-Total-Count` traz o total que atende aos filtros. O `events-tickets-service` usa esta "
-        "rota para montar o histórico de um evento ou ingresso."
+        "`X-Total-Count` traz o total que atende aos filtros. O `events-service` e o "
+        "`tickets-service` usam esta rota para montar o histórico de um evento ou ingresso."
     ),
     response_description="Registros encontrados.",
     responses={
@@ -83,7 +83,7 @@ def list_logs(
     action: Optional[str] = Query(default=None, examples=["ticket.issued"]),
     level: Optional[LogLevel] = Query(default=None),
     status_filter: Optional[LogStatus] = Query(default=None, alias="status"),
-    source: Optional[str] = Query(default=None, examples=["events-tickets-service"]),
+    source: Optional[str] = Query(default=None, examples=["tickets-service"]),
     correlation_id: Optional[str] = Query(default=None, examples=["demo-123"]),
     include_archived: bool = Query(default=False, description="Inclui os arquivados."),
     order: Literal["asc", "desc"] = Query(

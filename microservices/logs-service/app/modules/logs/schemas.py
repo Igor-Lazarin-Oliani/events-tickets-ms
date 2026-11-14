@@ -13,7 +13,7 @@ ENTITY_TYPE_PATTERN = r"^[a-z][a-z0-9_]*$"
 LOG_EXAMPLE = {
     "id": "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
     "message_id": "5a1e7c2e-9a55-4b2f-8f35-2f1b7e8a4c10",
-    "source": "events-tickets-service",
+    "source": "tickets-service",
     "action": "ticket.issued",
     "entity_type": "ticket",
     "entity_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -114,7 +114,7 @@ class LogResponse(BaseModel):
 
 
 class ActivityMessage(BaseModel):
-    """Corpo das mensagens publicadas pelo events-tickets-service no RabbitMQ."""
+    """Corpo das atividades publicadas pelo events-service e pelo tickets-service no RabbitMQ."""
 
     model_config = ConfigDict(extra="ignore")
 

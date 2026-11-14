@@ -31,7 +31,7 @@ def activity_message(**overrides):
         "level": "INFO",
         "message": "Ticket EVT-2026-A8F9K2 issued",
         "data": {"ticket_code": "EVT-2026-A8F9K2", "event_id": EVENT_ID, "status": "CONFIRMED"},
-        "source": "events-tickets-service",
+        "source": "tickets-service",
         "occurred_at": "2026-11-20T12:00:00+00:00",
         "correlation_id": "demo-123",
         **overrides,

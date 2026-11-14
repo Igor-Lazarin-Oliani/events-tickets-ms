@@ -52,8 +52,8 @@ def log_event(tag: str, level: int = logging.INFO, **fields: Any) -> None:
 
 
 class TelemetryMiddleware:
-    """Registra cada requisição e propaga o X-Correlation-Id recebido do gateway ou do
-    events-tickets-service."""
+    """Registra cada requisição e propaga o X-Correlation-Id recebido do gateway, do
+    events-service ou do tickets-service."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
