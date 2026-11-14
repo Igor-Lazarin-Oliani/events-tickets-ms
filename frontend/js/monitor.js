@@ -1,23 +1,33 @@
-// Saúde dos contêineres, fila do RabbitMQ e contadores do Prometheus, sempre consultados pelo gateway.
+// Saúde dos contêineres, filas do RabbitMQ e contadores do Prometheus, sempre consultados pelo gateway.
 import * as api from './api.js';
 import * as topo from './topology.js';
 import { h } from './util.js';
 
 export const health = {};
-// total = prontas + entregues sem confirmação (ack), como a coluna "Total" da interface do RabbitMQ.
+// Fila logs.activity. total = prontas + entregues sem confirmação (ack), como a coluna "Total"
+// da interface do RabbitMQ.
 export const queue = { known: false, total: 0, ready: 0, unacked: 0, consumers: 0 };
-export const metrics = { known: false, outboxPending: 0, up: {} };
+// As três filas, pelo nome: { known, total, consumers }.
+export const queues = {};
+export const metrics = { known: false, outboxPending: 0, pendingByJob: {}, up: {} };
+
+export const QUEUES = ['logs.activity', 'tickets.event-updates', 'events.spot-releases'];
 
 const LABELS = {
   gateway: 'api-gateway',
-  core: 'events-tickets-service',
-  coredb: 'events-tickets-db',
+  events: 'events-service',
+  eventsdb: 'events-db',
+  tickets: 'tickets-service',
+  ticketsdb: 'tickets-db',
   logs: 'logs-service',
   logsdb: 'logs-db',
   rabbitmq: 'rabbitmq',
   prometheus: 'prometheus',
   grafana: 'grafana',
 };
+
+// Nó do diagrama de cada job do Prometheus.
+const JOB_NODES = [['events', 'events-service'], ['tickets', 'tickets-service'], ['logs', 'logs-service']];
 
 const listeners = new Set();
 
@@ -36,6 +46,7 @@ function update(id, state, detail, tone) {
 }
 
 const isDown = (id) => health[id] === 'down';
+const noConsumer = (name) => queues[name]?.known && queues[name].consumers === 0;
 
 async function checkService(id, dbId, path) {
   const result = await api.request('GET', path, { timeoutMs: 3000 });
@@ -52,27 +63,46 @@ async function checkService(id, dbId, path) {
 }
 
 async function checkRabbit() {
-  const result = await api.rabbitQueue('logs.activity');
-  if (result.ok && result.data) {
-    const q = result.data;
-    Object.assign(queue, {
-      known: true,
-      total: q.messages ?? 0,
-      ready: q.messages_ready ?? 0,
-      unacked: q.messages_unacknowledged ?? 0,
-      consumers: q.consumers ?? 0,
-    });
-    const consumers = queue.consumers === 1 ? '1 consumidor' : `${queue.consumers} consumidores`;
-    update('rabbitmq', 'up', `${queue.total} na fila · ${consumers}`, queue.consumers === 0 ? 'warn' : undefined);
-    topo.setBadge('rabbitmq', queue.total > 0 ? String(queue.total) : null);
+  const results = await Promise.all(QUEUES.map((name) => api.rabbitQueue(name)));
+  let reached = false;
+  let missing = 0;
+  results.forEach((result, i) => {
+    const name = QUEUES[i];
+    if (result.ok && result.data) {
+      reached = true;
+      const q = result.data;
+      queues[name] = { known: true, total: q.messages ?? 0, consumers: q.consumers ?? 0 };
+      if (name === 'logs.activity') {
+        Object.assign(queue, {
+          known: true,
+          total: q.messages ?? 0,
+          ready: q.messages_ready ?? 0,
+          unacked: q.messages_unacknowledged ?? 0,
+          consumers: q.consumers ?? 0,
+        });
+      }
+    } else {
+      queues[name] = { known: false, total: 0, consumers: 0 };
+      if (result.status === 404 && result.reachedService) {
+        reached = true;
+        missing += 1;
+      }
+    }
+  });
+  if (!queues['logs.activity'].known) queue.known = false;
+
+  if (!reached) {
+    topo.setBadge('rabbitmq', null);
+    update('rabbitmq', 'down', 'fora do ar', 'error');
     return;
   }
-  queue.known = false;
-  topo.setBadge('rabbitmq', null);
-  if (result.status === 404 && result.reachedService) {
-    update('rabbitmq', 'warn', 'fila ainda não criada', 'warn');
+  const total = QUEUES.reduce((sum, name) => sum + queues[name].total, 0);
+  const consuming = QUEUES.filter((name) => queues[name].consumers > 0).length;
+  topo.setBadge('rabbitmq', total > 0 ? String(total) : null);
+  if (missing > 0) {
+    update('rabbitmq', 'warn', `${missing} fila(s) ainda não criada(s)`, 'warn');
   } else {
-    update('rabbitmq', 'down', 'fora do ar', 'error');
+    update('rabbitmq', 'up', `${total} na fila · ${consuming}/3 consumindo`, consuming < 3 ? 'warn' : undefined);
   }
 }
 
@@ -82,6 +112,7 @@ const METRIC_NAMES = [
   'outbox_messages_published_total',
   'outbox_messages_pending',
   'logs_messages_consumed_total',
+  'integration_messages_consumed_total',
   'logs_entries_created_total',
   'up',
 ];
@@ -95,6 +126,7 @@ async function checkPrometheus() {
   }
   const sums = {};
   const up = {};
+  const pendingByJob = {};
   for (const series of result.data.data.result) {
     const name = series.metric.__name__;
     const value = Number(series.value[1]);
@@ -102,6 +134,7 @@ async function checkPrometheus() {
       up[series.metric.job] = value;
     } else {
       sums[name] = (sums[name] ?? 0) + value;
+      if (name === 'outbox_messages_pending') pendingByJob[series.metric.job] = value;
     }
   }
   Object.assign(metrics, {
@@ -110,19 +143,19 @@ async function checkPrometheus() {
     cancelled: sums.tickets_cancelled_total ?? 0,
     published: sums.outbox_messages_published_total ?? 0,
     outboxPending: sums.outbox_messages_pending ?? 0,
-    consumed: sums.logs_messages_consumed_total ?? 0,
+    pendingByJob,
+    consumed: (sums.logs_messages_consumed_total ?? 0) + (sums.integration_messages_consumed_total ?? 0),
     entries: sums.logs_entries_created_total ?? 0,
     up,
   });
   const targets = Object.values(up);
   const upCount = targets.filter((v) => v === 1).length;
   update('prometheus', 'up', `alvos: ${upCount}/${targets.length} UP`, upCount < targets.length ? 'warn' : undefined);
-  topo.setBadge('core', metrics.outboxPending > 0 ? `${metrics.outboxPending} na outbox` : null);
-  topo.animateScrape(
-    [['core', 'events-tickets-service'], ['logs', 'logs-service']]
-      .filter(([, job]) => up[job] === 1)
-      .map(([node]) => node),
-  );
+  for (const [node, job] of JOB_NODES.slice(0, 2)) {
+    const pending = pendingByJob[job] ?? 0;
+    topo.setBadge(node, pending > 0 ? `${pending} na outbox` : null);
+  }
+  topo.animateScrape(JOB_NODES.filter(([, job]) => up[job] === 1).map(([node]) => node));
 }
 
 async function checkGrafana() {
@@ -135,6 +168,7 @@ function markAllUnknown() {
     if (id !== 'gateway') update(id, 'unknown', 'sem acesso pelo gateway');
   }
   queue.known = false;
+  for (const name of QUEUES) queues[name] = { known: false, total: 0, consumers: 0 };
   metrics.known = false;
 }
 
@@ -152,14 +186,20 @@ async function gatewayUp() {
 function refreshEdges() {
   const pairs = [
     ['browser', 'gateway', isDown('gateway')],
-    ['gateway', 'core', isDown('gateway') || isDown('core')],
+    ['gateway', 'events', isDown('gateway') || isDown('events')],
+    ['gateway', 'tickets', isDown('gateway') || isDown('tickets')],
     ['gateway', 'logs', isDown('gateway') || isDown('logs')],
-    ['core', 'coredb', isDown('core') || isDown('coredb')],
+    ['events', 'eventsdb', isDown('events') || isDown('eventsdb')],
+    ['tickets', 'ticketsdb', isDown('tickets') || isDown('ticketsdb')],
     ['logs', 'logsdb', isDown('logs') || isDown('logsdb')],
-    ['core', 'rabbitmq', isDown('core') || isDown('rabbitmq')],
-    ['rabbitmq', 'logs', isDown('rabbitmq') || isDown('logs') || (queue.known && queue.consumers === 0)],
-    ['core', 'logs', isDown('core') || isDown('logs')],
-    ['prometheus', 'core', isDown('prometheus') || metrics.up['events-tickets-service'] === 0],
+    ['tickets', 'events', isDown('tickets') || isDown('events')],
+    ['tickets', 'logs', isDown('tickets') || isDown('logs')],
+    ['events', 'logs', isDown('events') || isDown('logs')],
+    ['events', 'rabbitmq', isDown('events') || isDown('rabbitmq') || noConsumer('events.spot-releases')],
+    ['tickets', 'rabbitmq', isDown('tickets') || isDown('rabbitmq') || noConsumer('tickets.event-updates')],
+    ['rabbitmq', 'logs', isDown('rabbitmq') || isDown('logs') || noConsumer('logs.activity')],
+    ['prometheus', 'events', isDown('prometheus') || metrics.up['events-service'] === 0],
+    ['prometheus', 'tickets', isDown('prometheus') || metrics.up['tickets-service'] === 0],
     ['prometheus', 'logs', isDown('prometheus') || metrics.up['logs-service'] === 0],
     ['grafana', 'prometheus', isDown('grafana') || isDown('prometheus')],
   ];
@@ -169,12 +209,16 @@ function refreshEdges() {
 const KPIS = [
   { key: 'issued', label: 'Ingressos emitidos', source: 'prometheus', metric: 'tickets_issued_total' },
   { key: 'cancelled', label: 'Cancelados', source: 'prometheus', metric: 'tickets_cancelled_total' },
-  { key: 'published', label: 'Msgs publicadas', source: 'prometheus', metric: 'outbox_messages_published_total' },
-  { key: 'consumed', label: 'Msgs consumidas', source: 'prometheus', metric: 'logs_messages_consumed_total' },
+  { key: 'published', label: 'Msgs publicadas', source: 'prometheus', metric: 'outbox_messages_published_total (events-service e tickets-service)' },
+  { key: 'consumed', label: 'Msgs consumidas', source: 'prometheus', metric: 'logs_messages_consumed_total + integration_messages_consumed_total' },
   { key: 'entries', label: 'Registros gravados', source: 'prometheus', metric: 'logs_entries_created_total' },
-  { key: 'total', label: 'Na fila agora', source: 'rabbitmq', metric: 'messages (prontas + sem ack) da fila logs.activity' },
+  { key: 'total', label: 'Nas filas agora', source: 'rabbitmq', metric: 'mensagens (prontas + sem ack) das filas logs.activity, tickets.event-updates e events.spot-releases' },
 ];
 const kpiEls = {};
+
+function rabbitTotal() {
+  return QUEUES.reduce((sum, name) => sum + (queues[name]?.total ?? 0), 0);
+}
 
 function renderKpis() {
   const box = document.getElementById('kpis');
@@ -187,9 +231,10 @@ function renderKpis() {
         h('span', {}, kpi.label), value));
     }
   }
+  const rabbitKnown = QUEUES.some((name) => queues[name]?.known);
   for (const kpi of KPIS) {
-    const known = kpi.source === 'rabbitmq' ? queue.known : metrics.known;
-    const raw = kpi.source === 'rabbitmq' ? queue[kpi.key] : metrics[kpi.key];
+    const known = kpi.source === 'rabbitmq' ? rabbitKnown : metrics.known;
+    const raw = kpi.source === 'rabbitmq' ? rabbitTotal() : metrics[kpi.key];
     const text = known ? String(Math.round(raw)) : '–';
     const el = kpiEls[kpi.key];
     if (el.textContent !== text) {
@@ -219,15 +264,16 @@ export function start() {
   every(2000, async () => {
     if (await gatewayUp()) {
       await Promise.all([
-        checkService('core', 'coredb', '/health/events-tickets'),
+        checkService('events', 'eventsdb', '/health/events'),
+        checkService('tickets', 'ticketsdb', '/health/tickets'),
         checkService('logs', 'logsdb', '/health/logs'),
       ]);
     }
     refreshEdges();
     renderKpis();
   });
-  // Laço próprio: com um serviço fora do ar, a checagem de saúde espera o timeout, e a fila não
-  // pode atrasar junto.
+  // Laço próprio: com um serviço fora do ar, a checagem de saúde espera o timeout, e as filas não
+  // podem atrasar junto.
   every(1500, async () => {
     if (health.gateway !== 'up') return;
     await checkRabbit();

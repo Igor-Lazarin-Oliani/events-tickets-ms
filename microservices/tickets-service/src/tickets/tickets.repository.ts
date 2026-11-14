@@ -1,0 +1,118 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { isUUID } from 'class-validator';
+import { randomInt } from 'node:crypto';
+import { EntityManager, FindOptionsWhere, Not, Repository } from 'typeorm';
+import { Page, PageRequest } from '../common/pagination';
+import { uniqueViolationConstraint } from '../common/postgres-errors';
+import { ACTIVE_PARTICIPANT_INDEX, Ticket, TicketStatus } from './entities/ticket.entity';
+
+export interface TicketFilters {
+  event_id?: string;
+  participant_email?: string;
+  status?: TicketStatus;
+}
+
+const TICKET_CODE_PREFIX = 'EVT-2026-';
+const TICKET_CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const TICKET_CODE_SUFFIX_LENGTH = 6;
+const MAX_TICKET_CODE_ATTEMPTS = 5;
+
+// O id vem pronto: é a chave da reserva da vaga no events-service, feita antes de salvar.
+export type NewTicket = Omit<Ticket, 'ticket_code' | 'created_at' | 'updated_at'>;
+export type CancelledTicketRef = Pick<Ticket, 'id' | 'ticket_code'>;
+
+export function generateTicketCode(): string {
+  let suffix = '';
+  for (let index = 0; index < TICKET_CODE_SUFFIX_LENGTH; index += 1) {
+    suffix += TICKET_CODE_ALPHABET[randomInt(TICKET_CODE_ALPHABET.length)];
+  }
+  return `${TICKET_CODE_PREFIX}${suffix}`;
+}
+
+/** Único ponto de acesso à tabela tickets. Recebe o EntityManager da transação em curso. */
+@Injectable()
+export class TicketsRepository {
+  constructor(@InjectRepository(Ticket) private readonly tickets: Repository<Ticket>) {}
+
+  /** Página de ingressos, dos mais recentes aos mais antigos, com o total que atende aos filtros. */
+  async findAll(filters: TicketFilters, page: PageRequest): Promise<Page<Ticket>> {
+    const where: FindOptionsWhere<Ticket> = {};
+    if (filters.event_id) where.event_id = filters.event_id;
+    if (filters.participant_email) where.participant_email = filters.participant_email;
+    if (filters.status) where.status = filters.status;
+    const [items, total] = await this.tickets.findAndCount({
+      where,
+      // O id desempata inscrições simultâneas, para as páginas não repetirem itens.
+      order: { created_at: 'DESC', id: 'DESC' },
+      take: page.limit,
+      skip: page.offset,
+    });
+    return { items, total };
+  }
+
+  /** Aceita o UUID ou o ticket_code. */
+  findByIdOrCode(idOrCode: string): Promise<Ticket | null> {
+    const where = isUUID(idOrCode) ? { id: idOrCode } : { ticket_code: idOrCode };
+    return this.tickets.findOne({ where });
+  }
+
+  findActiveRegistration(eventId: string, participantDocument: string): Promise<Ticket | null> {
+    return this.tickets.findOne({
+      where: {
+        event_id: eventId,
+        participant_document: participantDocument,
+        status: Not(TicketStatus.CANCELLED),
+      },
+    });
+  }
+
+  /**
+   * Salva com um código novo a cada colisão. Cada tentativa roda em um savepoint, porque um erro
+   * dentro da transação do PostgreSQL invalidaria o resto da transação.
+   */
+  async insertWithUniqueCode(manager: EntityManager, data: NewTicket): Promise<Ticket> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await manager.transaction((savepoint) => {
+          const repository = savepoint.getRepository(Ticket);
+          return repository.save(repository.create({ ...data, ticket_code: generateTicketCode() }));
+        });
+      } catch (error) {
+        const constraint = uniqueViolationConstraint(error);
+        const isCodeCollision = constraint !== undefined && constraint !== ACTIVE_PARTICIPANT_INDEX;
+        if (!isCodeCollision || attempt === MAX_TICKET_CODE_ATTEMPTS) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  /** Atualiza só se o status não mudou desde a leitura; false se outra requisição chegou antes. */
+  async updateIfStatus(
+    manager: EntityManager,
+    id: string,
+    expectedStatus: TicketStatus,
+    changes: Partial<Ticket>,
+  ): Promise<boolean> {
+    const result = await manager
+      .getRepository(Ticket)
+      .update({ id, status: expectedStatus }, changes);
+    return Boolean(result.affected);
+  }
+
+  /** Cancela de uma vez os ingressos ativos do evento e devolve quais foram cancelados. */
+  async cancelActiveForEvent(manager: EntityManager, eventId: string): Promise<CancelledTicketRef[]> {
+    const result = await manager
+      .createQueryBuilder()
+      .update(Ticket)
+      .set({ status: TicketStatus.CANCELLED })
+      .where('"event_id" = :eventId AND "status" <> :cancelled', {
+        eventId,
+        cancelled: TicketStatus.CANCELLED,
+      })
+      .returning(['id', 'ticket_code'])
+      .execute();
+    return (result.raw as CancelledTicketRef[]) ?? [];
+  }
+}

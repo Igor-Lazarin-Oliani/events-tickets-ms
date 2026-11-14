@@ -12,7 +12,8 @@ from app.modules.logs.repository import LogRepository
 from app.modules.logs.schemas import ActivityMessage
 from app.modules.logs.service import LogService
 
-EXCHANGE = "events-tickets.exchange"
+# Exchange em que o events-service e o tickets-service publicam as atividades (D20, D34).
+EXCHANGE = "activities.exchange"
 QUEUE = "logs.activity"
 DEAD_LETTER_EXCHANGE = "logs.activity.dlx"
 DEAD_LETTER_QUEUE = "logs.activity.dlq"

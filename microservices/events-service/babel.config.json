@@ -1,0 +1,7 @@
+{
+  "presets": [["@babel/preset-env", { "targets": { "node": "20" } }]],
+  "plugins": [
+    ["@babel/plugin-proposal-decorators", { "version": "legacy" }],
+    ["@babel/plugin-transform-class-properties", { "loose": true }]
+  ]
+}

@@ -15,11 +15,12 @@
       <span>eventos, ingressos e registro de atividades</span>
     </div>
     <nav class="links" aria-label="Ferramentas">
-      <a href="/docs/events-tickets" target="_blank" rel="noopener">Swagger eventos e ingressos</a>
+      <a href="/docs/events" target="_blank" rel="noopener">Swagger eventos</a>
+      <a href="/docs/tickets" target="_blank" rel="noopener">Swagger ingressos</a>
       <a href="/docs/logs" target="_blank" rel="noopener">Swagger logs</a>
       <a href="/grafana/" target="_blank" rel="noopener">Grafana</a>
       <a href="/prometheus/targets" target="_blank" rel="noopener">Prometheus</a>
-      <a href="/rabbitmq/#/queues/%2F/logs.activity" target="_blank" rel="noopener">RabbitMQ</a>
+      <a href="/rabbitmq/#/queues" target="_blank" rel="noopener">RabbitMQ</a>
     </nav>
   </header>
 
@@ -107,13 +108,13 @@
             <li><i class="line scrape"></i>telemetria</li>
           </ul>
         </div>
-        <svg id="topology" role="img" aria-label="Diagrama dos 8 contêineres e do navegador, com o estado de cada um"></svg>
-        <p class="caption">Saúde consultada a cada 2 s pelo gateway. Cada animação acompanha uma chamada real (em câmera lenta; os tempos reais estão no rastro), e a parte assíncrona só aparece quando o registro chega ao <code>logs-service</code>.</p>
+        <svg id="topology" role="img" aria-label="Diagrama dos 10 contêineres e do navegador, com o estado de cada um"></svg>
+        <p class="caption">Saúde consultada a cada 2 s pelo gateway. Cada animação acompanha uma chamada real (em câmera lenta; os tempos reais estão no rastro), e a parte assíncrona, como a devolução de vaga e o cancelamento em cascata, só aparece quando o registro chega ao <code>logs-service</code>.</p>
       </div>
 
       <div class="card kpi-card">
         <div class="kpis" id="kpis"></div>
-        <p class="caption">Contadores do Prometheus (coleta a cada 5 s; zeram quando o serviço reinicia) e fila lida da API do RabbitMQ.</p>
+        <p class="caption">Contadores do Prometheus (coleta a cada 5 s; zeram quando o serviço reinicia) e filas lidas da API do RabbitMQ.</p>
       </div>
 
       <div class="card trace-card">
@@ -185,21 +186,34 @@
         </ul>
       </section>
       <section>
-        <h3>2. O RabbitMQ cai, e nada se perde</h3>
-        <div class="command"><code>docker compose stop rabbitmq</code><button class="btn small" data-copy="docker compose stop rabbitmq">Copiar</button></div>
+        <h3>2. O events-service cai: só a emissão para</h3>
+        <div class="command"><code>docker compose stop events-service</code><button class="btn small" data-copy="docker compose stop events-service">Copiar</button></div>
         <ul>
-          <li>Emita ou cancele ingressos: tudo funciona, e as mensagens ficam na tabela <code>outbox_messages</code> do <code>events-tickets-db</code>.</li>
-          <li>O nó do <code>events-tickets-service</code> mostra as mensagens pendentes na outbox, lidas do Prometheus.</li>
+          <li>Emita um ingresso: o <code>tickets-service</code> não consegue reservar a vaga e responde <code>503 Events service unavailable</code>, sem emitir nada.</li>
+          <li>Consultas, check-in e cancelamento de ingressos continuam funcionando no <code>tickets-service</code>.</li>
+          <li>Cancele um ingresso: o pedido de devolução da vaga espera na fila <code>events.spot-releases</code>.</li>
         </ul>
-        <div class="command"><code>docker compose start rabbitmq</code><button class="btn small" data-copy="docker compose start rabbitmq">Copiar</button></div>
+        <div class="command"><code>docker compose start events-service</code><button class="btn small" data-copy="docker compose start events-service">Copiar</button></div>
         <ul>
-          <li>Em poucos segundos, a outbox publica o que estava pendente e o rastro é concluído.</li>
+          <li>O <code>events-service</code> consome a fila, devolve a vaga uma única vez e o rastro é concluído.</li>
         </ul>
       </section>
       <section>
-        <h3>3. Uma operação atravessando os contêineres</h3>
-        <p>Cada cartão do rastro tem o botão <strong>grep</strong>, que copia o comando abaixo com o <code>correlation_id</code> da operação. Ele mostra a mesma operação no gateway, no <code>events-tickets-service</code> e no <code>logs-service</code>.</p>
-        <div class="command"><code>docker compose logs api-gateway events-tickets-service logs-service | grep &lt;correlation_id&gt;</code></div>
+        <h3>3. O RabbitMQ cai, e nada se perde</h3>
+        <div class="command"><code>docker compose stop rabbitmq</code><button class="btn small" data-copy="docker compose stop rabbitmq">Copiar</button></div>
+        <ul>
+          <li>Emita ou cancele ingressos: tudo funciona, e as mensagens ficam nas tabelas <code>outbox_messages</code> do <code>events-db</code> e do <code>tickets-db</code>.</li>
+          <li>Os nós do <code>events-service</code> e do <code>tickets-service</code> mostram as mensagens pendentes na outbox, lidas do Prometheus.</li>
+        </ul>
+        <div class="command"><code>docker compose start rabbitmq</code><button class="btn small" data-copy="docker compose start rabbitmq">Copiar</button></div>
+        <ul>
+          <li>Em poucos segundos, as outbox publicam o que estava pendente, a vaga cancelada volta e o rastro é concluído.</li>
+        </ul>
+      </section>
+      <section>
+        <h3>4. Uma operação atravessando os contêineres</h3>
+        <p>Cada cartão do rastro tem o botão <strong>grep</strong>, que copia o comando abaixo com o <code>correlation_id</code> da operação. Ele mostra a mesma operação no gateway, nos três serviços e nas mensagens trocadas pelo RabbitMQ.</p>
+        <div class="command"><code>docker compose logs api-gateway events-service tickets-service logs-service | grep &lt;correlation_id&gt;</code></div>
       </section>
     </div>
   </dialog>

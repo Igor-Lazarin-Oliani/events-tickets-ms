@@ -14,7 +14,9 @@ services:
     # Sem depender do logs-service: com ele fora do ar, a venda segue pelo gateway, e só as rotas
     # dele respondem 503. O NGINX resolve os nomes a cada requisição, então o encontra quando subir.
     depends_on:
-      events-tickets-service:
+      events-service:
+        condition: service_healthy
+      tickets-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/gateway/health"]
@@ -24,19 +26,38 @@ services:
     networks:
       - events-tickets-network
 
-  events-tickets-db:
+  events-db:
     image: postgres:16-alpine
-    container_name: events-tickets-db
+    container_name: events-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: events_tickets_db
-      POSTGRES_USER: events_tickets_user
-      POSTGRES_PASSWORD: events_tickets_pass
+      POSTGRES_DB: events_db
+      POSTGRES_USER: events_user
+      POSTGRES_PASSWORD: events_pass
     volumes:
-      - events_tickets_pgdata:/var/lib/postgresql/data
+      - events_pgdata:/var/lib/postgresql/data
     healthcheck:
       # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
-      test: ["CMD-SHELL", "pg_isready -h localhost -U events_tickets_user -d events_tickets_db"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -U events_user -d events_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - events-tickets-network
+
+  tickets-db:
+    image: postgres:16-alpine
+    container_name: tickets-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tickets_db
+      POSTGRES_USER: tickets_user
+      POSTGRES_PASSWORD: tickets_pass
+    volumes:
+      - tickets_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # O "-h localhost" ignora o servidor temporário usado na inicialização da imagem.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U tickets_user -d tickets_db"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -83,25 +104,54 @@ services:
     networks:
       - events-tickets-network
 
-  events-tickets-service:
-    build: ./microservices/events-tickets-service
-    container_name: events-tickets-service
+  events-service:
+    build: ./microservices/events-service
+    container_name: events-service
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://events_tickets_user:events_tickets_pass@events-tickets-db:5432/events_tickets_db
+      DATABASE_URL: postgresql://events_user:events_pass@events-db:5432/events_db
       RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
-      PORT: "3000"
-      SERVICE_NAME: events-tickets-service
+      PORT: "3001"
+      SERVICE_NAME: events-service
       LOGS_SERVICE_URL: http://logs-service:8000
       LOGS_SERVICE_TIMEOUT_MS: "3000"
-    # Sem depender do logs-service: vendas e inscrições funcionam mesmo com ele fora do ar.
+    # Não depende do tickets-service nem do logs-service: eventos e reservas funcionam sem eles.
     depends_on:
-      events-tickets-db:
+      events-db:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - events-tickets-network
+
+  tickets-service:
+    build: ./microservices/tickets-service
+    container_name: tickets-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://tickets_user:tickets_pass@tickets-db:5432/tickets_db
+      RABBITMQ_URL: amqp://events_tickets:events_tickets_pass@rabbitmq:5672/%2F
+      PORT: "3002"
+      SERVICE_NAME: tickets-service
+      EVENTS_SERVICE_URL: http://events-service:3001
+      EVENTS_SERVICE_TIMEOUT_MS: "3000"
+      LOGS_SERVICE_URL: http://logs-service:8000
+      LOGS_SERVICE_TIMEOUT_MS: "3000"
+    # Não depende do events-service para subir: consultas, check-in e cancelamentos funcionam sem
+    # ele, e só a emissão responde 503 enquanto ele estiver fora do ar (D30).
+    depends_on:
+      tickets-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3002/health"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -152,7 +202,9 @@ services:
     # Também sem depender do logs-service: a telemetria precisa subir justamente para mostrar um
     # serviço fora do ar (up = 0).
     depends_on:
-      events-tickets-service:
+      events-service:
+        condition: service_healthy
+      tickets-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/prometheus/-/healthy"]
@@ -201,7 +253,8 @@ networks:
     driver: bridge
 
 volumes:
-  events_tickets_pgdata:
+  events_pgdata:
+  tickets_pgdata:
   logs_pgdata:
   prometheus_data:
   rabbitmq_data:

@@ -34,10 +34,10 @@ app = FastAPI(
     title="events-tickets-ms - Logs Microservice API",
     description=(
         "Registro de atividades da plataforma events-tickets-ms. Os registros automáticos chegam "
-        "do events-tickets-service pelo RabbitMQ; a API permite criar registros manuais, "
+        "do events-service e do tickets-service pelo RabbitMQ; a API permite criar registros manuais, "
         "consultar, fazer a triagem e arquivar."
     ),
-    version="2.0.0",
+    version="3.0.0",
     # Caminhos públicos: o gateway encaminha /docs/logs sem reescrever a URL.
     docs_url="/docs/logs",
     openapi_url="/docs/logs/openapi.json",

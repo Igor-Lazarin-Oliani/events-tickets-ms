@@ -44,18 +44,52 @@ const MODALITIES = [
   { value: 'HYBRID', label: 'Híbrido' },
 ];
 const MODALITY_LABEL = Object.fromEntries(MODALITIES.map((m) => [m.value, m.label]));
-const SERVICE_OF = { core: 'events-tickets-service', history: 'events-tickets-service', logs: 'logs-service' };
-const DB_OF = { core: 'events-tickets-db', history: 'events-tickets-db', logs: 'logs-db' };
+const SERVICE_OF = {
+  events: 'events-service',
+  tickets: 'tickets-service',
+  issue: 'tickets-service',
+  logs: 'logs-service',
+  eventHistory: 'events-service',
+  ticketHistory: 'tickets-service',
+};
+const DB_OF = { events: 'events-db', tickets: 'tickets-db', issue: 'tickets-db', logs: 'logs-db' };
 
 // ---------------------------------------------------------------------------------------------
 // Operações rastreadas
 // ---------------------------------------------------------------------------------------------
 
+/** A recusa veio do events-service, na reserva da vaga (as mensagens dele começam por "Event"). */
+const refusedByEvents = (result) => /^Event /.test(api.errorMessage(result));
+
+/** Passo da reserva de vaga, a chamada HTTP do tickets-service ao events-service (emissão). */
+function reservationStep(trace, result, at) {
+  const label = 'tickets-service → events-service (HTTP REST síncrono)';
+  const message = api.errorMessage(result);
+  if (result.ok) {
+    trace.step('rest', {
+      label,
+      detail: 'PATCH /events/{id}/reserve-spot com o id do ingresso: vaga reservada pelo UPDATE condicional no events-db',
+      state: 'ok',
+      at,
+    });
+  } else if (result.status === 503 && message === 'Events service unavailable') {
+    trace.step('rest', {
+      label,
+      detail: 'sem resposta do events-service: nenhum ingresso foi emitido, e a devolução de uma eventual reserva foi gravada na outbox (compensação)',
+      state: 'error',
+      at,
+    });
+  } else if (refusedByEvents(result)) {
+    trace.step('rest', { label, detail: `o events-service recusou a reserva: ${message}`, state: 'warn', at });
+  }
+}
+
 /**
  * Escrita com rastro: a chamada HTTP, a transação no banco e, quando houver atividades, a
- * entrega assíncrona até o logs-service. Devolve o resultado da chamada.
+ * entrega assíncrona até o logs-service. async: { label, origins, waitsFor } do watchAsync.
+ * Devolve o resultado da chamada.
  */
-async function traced({ title, subtitle, method, path, body, route = 'core', activities = 0, tx }) {
+async function traced({ title, subtitle, method, path, body, route = 'events', activities = 0, tx, async: asyncOptions }) {
   const correlationId = newCorrelationId();
   const trace = traces.create({ title, subtitle, correlationId });
   const service = SERVICE_OF[route];
@@ -84,7 +118,10 @@ async function traced({ title, subtitle, method, path, body, route = 'core', act
   trace.step('http', { detail: result.ok ? line : `${line} · ${api.errorMessage(result)}`, state: httpState, at });
 
   const dbLabel = `${service} → ${DB_OF[route]}`;
-  if (result.ok) {
+  if (route === 'issue') reservationStep(trace, result, at);
+  if (route === 'issue' && !result.ok && (refusedByEvents(result) || result.status === 503)) {
+    trace.step('db', { label: dbLabel, detail: 'nada foi gravado: sem vaga reservada, não há ingresso', state: 'warn', at });
+  } else if (result.ok) {
     trace.step('db', { label: dbLabel, detail: tx, state: 'ok', at });
   } else if (result.status === 400 || result.status === 422) {
     trace.step('db', {
@@ -105,7 +142,7 @@ async function traced({ title, subtitle, method, path, body, route = 'core', act
   }
 
   if (result.ok && activities !== 0) {
-    traces.watchAsync(trace, activities);
+    traces.watchAsync(trace, activities, asyncOptions);
   } else {
     trace.finish(httpState);
   }
@@ -113,7 +150,7 @@ async function traced({ title, subtitle, method, path, body, route = 'core', act
 }
 
 /** Leitura sem rastro, só com a animação discreta (cinza). */
-function read(path, { animate = true, route = 'core' } = {}) {
+function read(path, { animate = true, route = 'events' } = {}) {
   const promise = api.request('GET', path);
   if (animate) void topo.animateCall(route, promise, { light: true });
   return promise;
@@ -282,7 +319,8 @@ function openNewEvent() {
         path: '/events',
         body,
         activities: 1,
-        tx: 'uma transação: grava o evento e a mensagem event.created na outbox',
+        tx: 'uma transação no events-db: grava o evento e a mensagem event.created na outbox',
+        async: { origins: ['events'] },
       });
       if (!result.ok) return api.errorMessage(result);
       focusEvent(result.data.id);
@@ -321,7 +359,8 @@ function openEditEvent(ev) {
         path: `/events/${ev.id}`,
         body: changes,
         activities: 1,
-        tx: 'uma transação, com o evento bloqueado (FOR UPDATE): aplica a mudança e grava event.updated na outbox',
+        tx: 'uma transação no events-db, com o evento bloqueado (FOR UPDATE): aplica a mudança e grava event.updated na outbox',
+        async: { origins: ['events'] },
       });
       if (!result.ok) return api.errorMessage(result);
       await afterWrite();
@@ -342,7 +381,7 @@ async function activeTicketCount(eventId) {
 async function cancelEvent(ev) {
   const ok = await confirmAction({
     title: 'Cancelar evento',
-    message: `“${ev.title}” será cancelado, e todos os ingressos ativos serão cancelados na mesma transação. Um evento cancelado não pode ser reaberto.`,
+    message: `“${ev.title}” será cancelado. O tickets-service recebe o aviso pelo RabbitMQ e cancela os ingressos ativos em cerca de 1 s. Um evento cancelado não pode ser reaberto.`,
     confirmLabel: 'Cancelar evento',
   });
   if (!ok) return;
@@ -354,7 +393,12 @@ async function cancelEvent(ev) {
     path: `/events/${ev.id}`,
     body: { status: 'CANCELLED' },
     activities: active === null ? null : 1 + active,
-    tx: `uma transação: cancela o evento e ${active ?? 'os'} ingresso(s) ativo(s), e grava event.cancelled e um ticket.cancelled por ingresso na outbox`,
+    tx: 'uma transação no events-db, com o evento bloqueado: cancela o evento e grava event.cancelled e o aviso ao tickets-service na outbox',
+    async: {
+      label: `outbox → rabbitmq → tickets-service (cancela ${active ?? 'os'} ingresso(s)) e logs-service`,
+      origins: ['events'],
+      waitsFor: 'tickets',
+    },
   });
   if (!result.ok) toast(api.errorMessage(result), 'error');
   await afterWrite();
@@ -363,7 +407,7 @@ async function cancelEvent(ev) {
 async function deleteEvent(ev) {
   const ok = await confirmAction({
     title: 'Remover evento',
-    message: `“${ev.title}” será removido, e os ingressos ativos serão cancelados. Os ingressos guardam uma cópia do evento (event_snapshot), e o histórico continua no logs-service.`,
+    message: `“${ev.title}” será removido, e o tickets-service cancela os ingressos ativos ao receber o aviso pelo RabbitMQ. Os ingressos guardam uma cópia do evento (event_snapshot), e o histórico continua no logs-service.`,
     confirmLabel: 'Remover',
   });
   if (!ok) return;
@@ -374,7 +418,12 @@ async function deleteEvent(ev) {
     method: 'DELETE',
     path: `/events/${ev.id}`,
     activities: active === null ? null : 1 + active,
-    tx: `uma transação: cancela ${active ?? 'os'} ingresso(s) ativo(s), remove o evento e grava event.deleted e um ticket.cancelled por ingresso na outbox`,
+    tx: 'uma transação no events-db: remove o evento e grava event.deleted e o aviso ao tickets-service na outbox',
+    async: {
+      label: `outbox → rabbitmq → tickets-service (cancela ${active ?? 'os'} ingresso(s)) e logs-service`,
+      origins: ['events'],
+      waitsFor: 'tickets',
+    },
   });
   if (!result.ok) toast(api.errorMessage(result), 'error');
   if (result.ok && state.selectedEventId === ev.id) state.selectedEventId = null;
@@ -388,7 +437,7 @@ async function deleteEvent(ev) {
 async function loadTickets({ animate = true } = {}) {
   const eventId = state.selectedEventId;
   if (!eventId) return;
-  const result = await read(`/tickets?event_id=${eventId}&limit=${PAGE_LIMIT}`, { animate });
+  const result = await read(`/tickets?event_id=${eventId}&limit=${PAGE_LIMIT}`, { animate, route: 'tickets' });
   if (eventId !== state.selectedEventId) return;
   state.ticketsLoading = false;
   if (result.ok) {
@@ -438,7 +487,7 @@ function openIssueTicket(ev) {
   const person = samplePerson();
   openForm({
     title: 'Inscrever participante',
-    description: `POST /tickets em “${ev.title}” (${ev.available_spots} vaga(s) livre(s)). Repetir o documento de um inscrito ativo responde 409.`,
+    description: `POST /tickets em “${ev.title}” (${ev.available_spots} vaga(s) livre(s)). O tickets-service reserva a vaga no events-service por HTTP antes de salvar. Repetir o documento de um inscrito ativo responde 409.`,
     fields: [
       { name: 'participant_name', label: 'Nome', required: true, value: person.name, wide: true },
       { name: 'participant_email', label: 'E-mail', type: 'email', required: true, value: person.email },
@@ -453,8 +502,10 @@ function openIssueTicket(ev) {
         method: 'POST',
         path: '/tickets',
         body: { event_id: ev.id, ...v, modality_tier: v.modality_tier || undefined },
+        route: 'issue',
         activities: 2,
-        tx: 'uma transação: reserva a vaga com UPDATE condicional, salva o ingresso e grava ticket.issued e event.spot_reserved na outbox',
+        tx: 'uma transação no tickets-db: salva o ingresso e grava ticket.issued na outbox; a reserva já gravou event.spot_reserved na outbox do events-db',
+        async: { origins: ['tickets', 'events'] },
       });
       await afterWrite();
       return result.ok ? null : api.errorMessage(result);
@@ -481,8 +532,9 @@ function openEditTicket(ticket) {
         method: 'PUT',
         path: `/tickets/${ticket.id}`,
         body: changes,
+        route: 'tickets',
         activities: 1,
-        tx: 'uma transação: atualiza o ingresso e grava ticket.updated na outbox',
+        tx: 'uma transação no tickets-db: atualiza o ingresso e grava ticket.updated na outbox',
       });
       await afterWrite();
       return result.ok ? null : api.errorMessage(result);
@@ -497,8 +549,9 @@ async function checkIn(ticket) {
     method: 'PUT',
     path: `/tickets/${ticket.id}`,
     body: { status: 'CHECKED_IN' },
+    route: 'tickets',
     activities: 1,
-    tx: 'uma transação: registra a presença e grava ticket.checked_in na outbox',
+    tx: 'uma transação no tickets-db: registra a presença e grava ticket.checked_in na outbox',
   });
   if (!result.ok) toast(api.errorMessage(result), 'error');
   await afterWrite();
@@ -507,7 +560,7 @@ async function checkIn(ticket) {
 async function cancelTicket(ticket) {
   const ok = await confirmAction({
     title: 'Cancelar ingresso',
-    message: `${ticket.ticket_code} (${ticket.participant_name}) será cancelado, e a vaga volta para o evento. O registro do ingresso é mantido.`,
+    message: `${ticket.ticket_code} (${ticket.participant_name}) será cancelado, e a vaga volta para o evento cerca de 1 s depois, pelo RabbitMQ. O registro do ingresso é mantido.`,
     confirmLabel: 'Cancelar ingresso',
   });
   if (!ok) return;
@@ -516,8 +569,14 @@ async function cancelTicket(ticket) {
     subtitle: `${ticket.ticket_code} (${ticket.participant_name})`,
     method: 'DELETE',
     path: `/tickets/${ticket.id}`,
+    route: 'tickets',
     activities: 2,
-    tx: 'uma transação: cancela o ingresso, devolve a vaga e grava ticket.cancelled e event.spot_released na outbox',
+    tx: 'uma transação no tickets-db: cancela o ingresso e grava ticket.cancelled e o pedido de devolução da vaga na outbox',
+    async: {
+      label: 'outbox → rabbitmq → events-service (devolve a vaga) e logs-service',
+      origins: ['tickets'],
+      waitsFor: 'events',
+    },
   });
   if (!result.ok) toast(api.errorMessage(result), 'error');
   await afterWrite();
@@ -531,7 +590,7 @@ function openRush(ev) {
   openEvent(ev.id);
   openForm({
     title: 'Teste de concorrência',
-    description: `Dispara várias inscrições ao mesmo tempo em “${ev.title}”, cada uma com um documento diferente. A reserva é um UPDATE condicional: só passam as que encontram vaga, e as demais recebem 409.`,
+    description: `Dispara várias inscrições ao mesmo tempo em “${ev.title}”, cada uma com um documento diferente. Cada uma pede a vaga ao events-service, onde a reserva é um UPDATE condicional: só passam as que encontram vaga, e as demais recebem 409.`,
     fields: [
       { name: 'count', label: 'Inscrições simultâneas', type: 'number', min: 2, max: 60, required: true, value: 20 },
     ],
@@ -553,7 +612,7 @@ async function rush(ev, count) {
     correlationId,
   });
   trace.step('http', {
-    label: 'Navegador → api-gateway → events-tickets-service',
+    label: 'Navegador → api-gateway → tickets-service → events-service',
     detail: `${count} × POST /tickets disparados juntos, com ${availableBefore} vaga(s) livre(s)`,
     state: 'pending',
   });
@@ -573,7 +632,7 @@ async function rush(ev, count) {
         modality_tier: 'LOTE_1',
       },
     });
-    animations.push(sleep(i * 25).then(() => topo.animateCall('core', promise, { scale: 0.55 })));
+    animations.push(sleep(i * 25).then(() => topo.animateCall('issue', promise, { scale: 0.55 })));
     return promise;
   });
   trace.animation = Promise.all(animations);
@@ -593,12 +652,12 @@ async function rush(ev, count) {
   const availableAfter = after.ok ? after.data.available_spots : '?';
   const safe = issued <= availableBefore;
   trace.step('db', {
-    label: 'events-tickets-service → events-tickets-db',
+    label: 'events-service → events-db (UPDATE condicional)',
     detail: `vagas livres: ${availableBefore} → ${availableAfter} · ${issued} ingresso(s) emitido(s) · ${safe ? 'nenhuma venda além da capacidade' : 'ATENÇÃO: mais vendas do que vagas'}`,
     state: safe ? 'ok' : 'error',
   });
   if (issued > 0) {
-    traces.watchAsync(trace, issued * 2);
+    traces.watchAsync(trace, issued * 2, { origins: ['tickets', 'events'] });
   } else {
     trace.finish('warn');
   }
@@ -613,17 +672,18 @@ async function showHistory(kind, id, label) {
   const path = `/${kind}s/${id}/history`;
   const correlationId = newCorrelationId();
   const trace = traces.create({ title: 'Consultar histórico', subtitle: label, correlationId });
-  const httpLabel = 'Navegador → api-gateway → events-tickets-service';
+  const service = kind === 'event' ? 'events-service' : 'tickets-service';
+  const httpLabel = `Navegador → api-gateway → ${service}`;
   trace.step('http', { label: httpLabel, detail: `GET ${path}`, state: 'pending' });
 
   const promise = api.request('GET', path, { correlationId });
-  const animation = topo.animateCall('history', promise);
+  const animation = topo.animateCall(kind === 'event' ? 'eventHistory' : 'ticketHistory', promise);
   trace.animation = animation;
   const result = await promise;
   const at = result.ms;
 
   const line = `GET ${path} → ${api.statusLine(result)} em ${fmtMs(result.ms)}`;
-  const restLabel = 'events-tickets-service → logs-service (HTTP REST síncrono)';
+  const restLabel = `${service} → logs-service (HTTP REST síncrono)`;
   const restQuery = `GET /logs?entity_type=${kind}&entity_id=${shortId(id)}`;
 
   if (result.ok) {
@@ -633,13 +693,13 @@ async function showHistory(kind, id, label) {
     trace.finish('ok');
     // O histórico abre depois da animação, para o caminho REST entre os serviços ficar visível.
     await Promise.race([animation, sleep(6000)]);
-    openHistory(kind, label, entries, total ?? null);
+    openHistory(kind, label, entries, total ?? null, service);
     return;
   }
   if (!result.reachedService || result.networkError) {
-    trace.step('http', { detail: `${line}: o api-gateway não alcançou o events-tickets-service`, state: 'error', at });
+    trace.step('http', { detail: `${line}: o api-gateway não alcançou o ${service}`, state: 'error', at });
     trace.finish('error');
-    toast('events-tickets-service indisponível', 'error');
+    toast(`${service} indisponível`, 'error');
     return;
   }
   trace.step('http', { detail: `${line} · ${api.errorMessage(result)}`, state: result.status === 503 ? 'error' : 'warn', at });
@@ -658,14 +718,14 @@ async function showHistory(kind, id, label) {
   }
 }
 
-function openHistory(kind, label, entries, total) {
+function openHistory(kind, label, entries, total, service) {
   $('#history-title').textContent = `Histórico: ${label}`;
   // O histórico é paginado; a página mostra a primeira e avisa quando há mais.
   const count = total !== null && total > entries.length
     ? `Os ${entries.length} primeiros de ${total} registros`
     : `${entries.length} registro(s)`;
   $('#history-description').textContent =
-    `Montado pelo events-tickets-service, que consultou o logs-service por HTTP. ${count} em ordem cronológica.`;
+    `Montado pelo ${service}, que consultou o logs-service por HTTP. ${count} em ordem cronológica.`;
   const list = $('#history-list');
   list.replaceChildren(...(entries.length
     ? entries.map((entry) => h('li', { class: `history-item level-${entry.level}` },
@@ -992,15 +1052,18 @@ function wire() {
   }
 
   traces.onShowCorrelation(showCorrelation);
+  // A devolução de vaga e a cascata chegam depois da resposta: a lista é recarregada quando os
+  // registros confirmam que elas aconteceram.
   traces.onAsyncResolved(() => {
     if (state.tab === 'logs') void loadLogs({ animate: false });
+    else void afterWrite();
   });
   monitor.onHealthChange((id, label, previous, next) => {
     if (next === 'down') {
       traces.note(`${label} saiu do ar`, 'error');
     } else if (previous === 'down') {
       traces.note(`${label} voltou${next === 'up' ? '' : ' parcialmente'}`, 'ok');
-      if (id === 'core' && next === 'up') void loadEvents({ animate: false });
+      if ((id === 'events' || id === 'tickets') && next === 'up') void loadEvents({ animate: false });
     }
   });
 }

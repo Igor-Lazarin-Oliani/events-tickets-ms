@@ -1,7 +1,7 @@
 // Rastro de cada operação: as etapas que a página consegue comprovar, na ordem em que acontecem.
 import * as api from './api.js';
 import * as topo from './topology.js';
-import { health, queue, metrics } from './monitor.js';
+import { health, metrics, queue, queues } from './monitor.js';
 import { copyText, fmtClock, fmtMs, h } from './util.js';
 
 const MAX_TRACES = 40;
@@ -40,7 +40,7 @@ export class Trace {
     this.animation = Promise.resolve();
     this.stepsEl = h('ol', { class: 'steps' });
 
-    const grep = `docker compose logs api-gateway events-tickets-service logs-service | grep ${correlationId}`;
+    const grep = `docker compose logs api-gateway events-service tickets-service logs-service | grep ${correlationId}`;
     this.el = h('li', { class: 'trace running' },
       h('div', { class: 'trace-head' },
         h('div', { class: 'trace-title' },
@@ -113,12 +113,16 @@ const ASYNC_LABEL = 'outbox → rabbitmq → logs-service → logs-db';
 
 /**
  * Acompanha a parte assíncrona: consulta o logs-service pelo correlation_id até os registros
- * chegarem. expected é o número de atividades da operação, ou null se não for conhecido.
+ * chegarem. expected é o número de atividades da operação, ou null se não for conhecido. origins
+ * são os serviços cujas outbox publicam (events, tickets), e waitsFor diz se a operação depende
+ * de outro serviço consumir uma fila antes: 'events' (devolução de vaga) ou 'tickets' (cascata).
  */
-export function watchAsync(trace, expected) {
+export function watchAsync(trace, expected, { label = ASYNC_LABEL, origins = ['tickets'], waitsFor = null } = {}) {
   const job = {
     trace,
     expected,
+    origins,
+    waitsFor,
     startedAt: Date.now(),
     nextAt: Date.now() + 900,
     phase: 'outbox',
@@ -126,7 +130,7 @@ export function watchAsync(trace, expected) {
     busy: false,
   };
   trace.step('async', {
-    label: ASYNC_LABEL,
+    label,
     detail: 'aguardando a publicação: a outbox é lida a cada 1 s',
     state: 'waiting',
   });
@@ -187,16 +191,23 @@ async function poll(job) {
   job.busy = false;
 }
 
+const OUTBOX_DB = { events: 'events-db', tickets: 'tickets-db' };
+
 function describeWaiting(job, age) {
   let detail;
   if (health.rabbitmq === 'down') {
     const pending = metrics.outboxPending > 0 ? ` (${metrics.outboxPending} pendente(s))` : '';
-    detail = `rabbitmq fora do ar: as mensagens esperam na outbox, dentro do events-tickets-db${pending}`;
+    const where = job.origins.map((origin) => OUTBOX_DB[origin]).join(' e ');
+    detail = `rabbitmq fora do ar: as mensagens esperam na outbox, dentro do ${where}${pending}`;
+  } else if (job.waitsFor === 'events' && (health.events === 'down' || queues['events.spot-releases']?.consumers === 0)) {
+    detail = 'events-service fora do ar: o pedido de devolução da vaga espera na fila events.spot-releases';
+  } else if (job.waitsFor === 'tickets' && (health.tickets === 'down' || queues['tickets.event-updates']?.consumers === 0)) {
+    detail = 'tickets-service fora do ar: o aviso de evento cancelado espera na fila tickets.event-updates';
   } else if (health.logs === 'down' || (queue.known && queue.consumers === 0)) {
     if (queue.total > 0) {
       if (job.phase === 'outbox') {
         job.phase = 'queued';
-        void afterCall(job.trace).then(() => topo.animatePublish(job.expected ?? 1));
+        void afterCall(job.trace).then(() => topo.animatePublish(job.origins));
       }
       detail = `publicadas: a fila logs.activity tem ${queue.total} mensagem(ns) esperando o logs-service, que está fora do ar`;
     } else {
@@ -213,6 +224,27 @@ function describeWaiting(job, age) {
 /** Espera a animação da chamada síncrona terminar, para a parte assíncrona não passar à frente. */
 function afterCall(trace) {
   return Promise.race([trace.animation, new Promise((r) => setTimeout(r, 6000))]);
+}
+
+const NODE_OF_SOURCE = { 'events-service': 'events', 'tickets-service': 'tickets' };
+const CASCADE_REASONS = new Set(['event_cancelled', 'event_deleted']);
+const TO_LOGS = ['rabbitmq', 'logs', 'logsdb'];
+
+/**
+ * Caminho que o registro percorreu até o logs-db. A devolução de vaga passa antes pelo
+ * events-service, e o cancelamento em cascata, pelo tickets-service, cada um pela sua fila.
+ */
+function asyncPath(entry, phase) {
+  const origin = NODE_OF_SOURCE[entry.source];
+  if (!origin) return null;
+  if (phase === 'queued') return TO_LOGS;
+  if (entry.action === 'event.spot_released') {
+    return ['tickets', 'rabbitmq', 'events', 'eventsdb', 'events', ...TO_LOGS];
+  }
+  if (entry.action === 'ticket.cancelled' && CASCADE_REASONS.has(entry.data?.reason)) {
+    return ['events', 'rabbitmq', 'tickets', 'ticketsdb', 'tickets', ...TO_LOGS];
+  }
+  return [origin, ...TO_LOGS];
 }
 
 // O Python grava microssegundos; o Date do navegador só garante milissegundos.
@@ -240,7 +272,7 @@ function resolve(job, entries) {
     state: 'ok',
   });
   job.trace.finish('ok');
-  const phase = job.phase;
-  void afterCall(job.trace).then(() => topo.animateAsync(phase, entries.length));
+  const paths = entries.map((entry) => asyncPath(entry, job.phase)).filter(Boolean);
+  void afterCall(job.trace).then(() => topo.animateAsync(paths));
   handlers.asyncResolved();
 }

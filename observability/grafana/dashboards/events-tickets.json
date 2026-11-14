@@ -1,157 +1,657 @@
 {
   "uid": "events-tickets",
   "title": "events-tickets-ms - Visão Geral",
-  "tags": ["events-tickets-ms"],
+  "tags": [
+    "events-tickets-ms"
+  ],
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": false,
   "refresh": "5s",
-  "time": {"from": "now-15m", "to": "now"},
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "timezone": "browser",
   "panels": [
     {
       "id": 1,
       "type": "stat",
-      "title": "events-tickets-service",
-      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "up{job=\"events-tickets-service\"}", "instant": true}],
-      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "FORA DO AR", "color": "red"}, "1": {"text": "NO AR", "color": "green"}}}]}, "overrides": []},
-      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+      "title": "events-service",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Resultado da coleta do Prometheus no job events-service: 1 se o /metrics respondeu na última coleta.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"events-service\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "FORA DO AR",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "NO AR",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 2,
       "type": "stat",
-      "title": "logs-service",
-      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "up{job=\"logs-service\"}", "instant": true}],
-      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "FORA DO AR", "color": "red"}, "1": {"text": "NO AR", "color": "green"}}}]}, "overrides": []},
-      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+      "title": "tickets-service",
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Resultado da coleta do Prometheus no job tickets-service: 1 se o /metrics respondeu na última coleta.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"tickets-service\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "FORA DO AR",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "NO AR",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Ingressos emitidos",
-      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum(tickets_issued_total) or vector(0)", "instant": true}],
-      "fieldConfig": {"defaults": {"decimals": 0}, "overrides": []},
-      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+      "title": "logs-service",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Resultado da coleta do Prometheus no job logs-service: 1 se o /metrics respondeu na última coleta.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"logs-service\"}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "FORA DO AR",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "NO AR",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Ingressos cancelados",
-      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum(tickets_cancelled_total) or vector(0)", "instant": true}],
-      "fieldConfig": {"defaults": {"decimals": 0}, "overrides": []},
-      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+      "title": "Ingressos emitidos",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "tickets-service: ingressos salvos depois da reserva da vaga.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(tickets_issued_total) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 5,
       "type": "stat",
-      "title": "Vagas reservadas",
-      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum(events_spot_operations_total{operation=\"reserve\",result=\"success\"}) or vector(0)", "instant": true}],
-      "fieldConfig": {"defaults": {"decimals": 0}, "overrides": []},
-      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+      "title": "Ingressos cancelados",
+      "gridPos": {
+        "x": 15,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "tickets-service: cancelados a pedido e em cascata, pelo cancelamento ou remoção do evento.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(tickets_cancelled_total) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 6,
       "type": "stat",
-      "title": "Registros de atividade gravados",
-      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum(logs_entries_created_total) or vector(0)", "instant": true}],
-      "fieldConfig": {"defaults": {"decimals": 0}, "overrides": []},
-      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+      "title": "Vagas reservadas",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "events-service: reservas feitas pelo UPDATE condicional, uma por ingresso.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(events_spot_operations_total{operation=\"reserve\",result=\"success\"}) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 7,
-      "type": "timeseries",
-      "title": "Requisições por segundo",
-      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum by (job) (rate(http_requests_total[1m]))", "legendFormat": "{{job}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "unit": "reqps"}, "overrides": []}
+      "type": "stat",
+      "title": "Registros gravados",
+      "gridPos": {
+        "x": 21,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "logs-service: registros de atividade gravados, vindos do RabbitMQ ou da API.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(logs_entries_created_total) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     },
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Latência p95",
-      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "title": "Requisições por segundo",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
-        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"events-tickets-service\"}[1m])))", "legendFormat": "events-tickets-service"},
-        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_highr_seconds_bucket{job=\"logs-service\"}[1m])))", "legendFormat": "logs-service"}
+        {
+          "refId": "A",
+          "expr": "sum by (job) (rate(http_requests_total[1m]))",
+          "legendFormat": "{{job}}"
+        }
       ],
-      "fieldConfig": {"defaults": {"min": 0, "unit": "s"}, "overrides": []}
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Respostas de erro por segundo (4xx e 5xx)",
-      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum by (job, status) (rate(http_requests_total{status=~\"[45]..\"}[1m]))", "legendFormat": "{{job}} {{status}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "unit": "reqps"}, "overrides": []}
+      "title": "Latência p95",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"events-service\"}[1m])))",
+          "legendFormat": "events-service"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"tickets-service\"}[1m])))",
+          "legendFormat": "tickets-service"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_highr_seconds_bucket{job=\"logs-service\"}[1m])))",
+          "legendFormat": "logs-service"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "A emissão no tickets-service inclui a chamada HTTP de reserva ao events-service."
     },
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Operações de vagas por segundo",
-      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum by (operation, result) (rate(events_spot_operations_total[1m]))", "legendFormat": "{{operation}} {{result}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []}
+      "title": "Respostas de erro por segundo (4xx e 5xx)",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (job, status) (rate(http_requests_total{status=~\"[45]..\"}[1m]))",
+          "legendFormat": "{{job}} {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 11,
       "type": "timeseries",
-      "title": "Requisições por rota",
-      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum by (job, method, route, handler) (rate(http_requests_total[1m]))", "legendFormat": "{{job}} {{method}} {{route}}{{handler}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "unit": "reqps"}, "overrides": []}
+      "title": "Operações de vagas por segundo (events-service)",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation, result) (rate(events_spot_operations_total[1m]))",
+          "legendFormat": "{{operation}} {{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "reserve: success, replayed (mesmo ticket_id de novo), conflict (perdeu a corrida) e rejected. release: success, duplicate, not_reserved, at_capacity e event_missing."
     },
     {
       "id": 12,
       "type": "timeseries",
-      "title": "Memória por serviço",
-      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "process_resident_memory_bytes", "legendFormat": "{{job}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "unit": "bytes"}, "overrides": []}
+      "title": "Reservas pedidas e compensações (tickets-service)",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(tickets_spot_reservations_total[1m]))",
+          "legendFormat": "reserva {{result}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (result) (rate(tickets_compensations_total[1m]))",
+          "legendFormat": "compensação {{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "description": "Reservas pedidas ao events-service por HTTP e devoluções pedidas porque a emissão falhou depois da reserva."
     },
     {
       "id": 13,
       "type": "timeseries",
-      "title": "Mensagens publicadas pela outbox (total)",
-      "gridPos": {"x": 0, "y": 28, "w": 8, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum by (routing_key) (outbox_messages_published_total)", "legendFormat": "{{routing_key}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "decimals": 0}, "overrides": []}
+      "title": "Requisições por rota",
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (job, method, route, handler) (rate(http_requests_total[1m]))",
+          "legendFormat": "{{job}} {{method}} {{route}}{{handler}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
     },
     {
       "id": 14,
       "type": "timeseries",
-      "title": "Mensagens consumidas pelo logs-service (total)",
-      "gridPos": {"x": 8, "y": 28, "w": 8, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "sum by (result) (logs_messages_consumed_total)", "legendFormat": "{{result}}"}],
-      "fieldConfig": {"defaults": {"min": 0, "decimals": 0}, "overrides": []}
+      "title": "Mensagens publicadas pelas outbox (total)",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (job, exchange, routing_key) (outbox_messages_published_total)",
+          "legendFormat": "{{job}} → {{exchange}} {{routing_key}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      }
     },
     {
       "id": 15,
       "type": "timeseries",
-      "title": "Mensagens aguardando na outbox",
-      "gridPos": {"x": 16, "y": 28, "w": 8, "h": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "expr": "outbox_messages_pending", "legendFormat": "pendentes"}],
-      "fieldConfig": {"defaults": {"min": 0, "decimals": 0}, "overrides": []}
+      "title": "Mensagens consumidas (total)",
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (logs_messages_consumed_total)",
+          "legendFormat": "logs-service {{result}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (job, routing_key, result) (integration_messages_consumed_total)",
+          "legendFormat": "{{job}} {{routing_key}} {{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "description": "logs-service: fila logs.activity. tickets-service: fila tickets.event-updates. events-service: fila events.spot-releases."
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Mensagens aguardando nas outbox",
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (job) (outbox_messages_pending)",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "description": "Mensagens gravadas e ainda não confirmadas pelo RabbitMQ. Com o broker fora do ar, mostra todo o acúmulo."
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Memória por serviço",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "process_resident_memory_bytes",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
     }
   ]
 }
