@@ -1,6 +1,6 @@
 # events-tickets-ms
 
-Plataforma distribuída de gestão de eventos e emissão unificada de inscrições e ingressos, com registro de atividades, desenvolvida como Trabalho Prático da disciplina de Sistemas Distribuídos (UFMS).
+Plataforma distribuída de gestão de eventos e emissão unificada de inscrições e ingressos, com registro de atividades.
 
 O sistema é genérico: atende de simpósios acadêmicos e workshops online a shows, corridas de rua e campeonatos de e-sports. Inscrição e ingresso são a mesma entidade: ao se inscrever, o participante recebe um ingresso digital com código único e controle de presença (check-in). Cada mudança em eventos e ingressos fica registrada no serviço de logs, que permite consultar o histórico e fazer a triagem dos registros.
 
